@@ -1,0 +1,26 @@
+[package]
+name = "anonchat-app"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "anonchat_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "anonchat"
+path = "src/main.rs"
+
+[dependencies]
+tauri            = { version = "2.5.1", features = ["protocol-asset"] }
+serde            = { version = "1.0.210", features = ["derive"] }
+serde_json       = "1.0.128"
+tokio            = { version = "1.40.0", features = ["full"] }
+thiserror        = "1.0.63"
+security-core    = { path = "../security-core" }
+
+[profile.release]
+strip    = true
+opt-level = "z"
+lto      = true
+panic    = "abort"
