@@ -1,0 +1,67 @@
+services:
+  redis-ram:
+    image: redis:7-alpine
+    container_name: anonchat-redis
+    command: redis-server --save "" --appendonly no --maxmemory 512mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - anon_net
+
+  chat-router:
+    build: ./server/router
+    container_name: anonchat-router
+    environment:
+      - REDIS_URL=redis://redis-ram:6379
+      - PORT=8080
+      # Replace with the deployment's active nodes and 32-byte X25519 keys.
+      - ACTIVE_PROXIES=[]
+    ports:
+      - "8080:8080"
+    depends_on:
+      redis-ram:
+        condition: service_healthy
+    networks:
+      - anon_net
+
+  proxy-guard:
+    build: ./server/proxy
+    environment:
+      - NODE_ROLE=guard
+      - LISTEN_PORT=9001
+      - NEXT_HOP_ADDR=proxy-middle:9002
+      - TLS_INSECURE_SKIP_VERIFY=true
+    ports:
+      - "9001:9001"
+    depends_on:
+      - proxy-middle
+    networks:
+      - anon_net
+
+  proxy-middle:
+    build: ./server/proxy
+    environment:
+      - NODE_ROLE=middle
+      - LISTEN_PORT=9002
+      - NEXT_HOP_ADDR=proxy-exit:9003
+      - TLS_INSECURE_SKIP_VERIFY=true
+    depends_on:
+      - proxy-exit
+    networks:
+      - anon_net
+
+  proxy-exit:
+    build: ./server/proxy
+    environment:
+      - NODE_ROLE=exit
+      - LISTEN_PORT=9003
+      - EXIT_ALLOW_PRIVATE=true
+    networks:
+      - anon_net
+
+networks:
+  anon_net:
+    driver: bridge
