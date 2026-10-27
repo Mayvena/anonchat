@@ -20,8 +20,9 @@ This document captures the confirmed issues found during the project review. It 
 
 ## 2. Router accepts arbitrary user IDs and allows connection takeover
 
+- Status: Fixed
 - Severity: High
-- Affected area: server/router/main.go
+- Affected area: server/router/main.go, server/router/main_test.go, client/frontend/src/ws.ts, client/frontend/src/main.ts
 - Issue:
   The WebSocket endpoint trusts the `user_id` query parameter and registers the connection under that identity without authentication or ownership validation. A client can impersonate another user by connecting with the same user ID, replacing the legitimate session, and receiving queued messages intended for that account.
 - Evidence:
@@ -29,6 +30,7 @@ This document captures the confirmed issues found during the project review. It 
   - The connection is registered under that value immediately: [server/router/main.go](server/router/main.go#L337-L345)
 - Impact:
   This is an authentication and identity-confusion issue that can cause message hijacking or denial of service against a valid session.
+- Solution: The router now ignores caller-selected query IDs, issues UUID identities with random credentials, and requires the credential over a WebSocket subprotocol to reconnect; only a credential hash is retained in Redis with a TTL. Regression tests verify caller IDs and missing or wrong credentials cannot reclaim a session, while a valid credential reconnects to the same identity.
 
 ## 3. Exit proxy allows private-network destinations by default in the compose deployment
 
@@ -95,7 +97,9 @@ The following checks were run during review:
 
 - `cd server/proxy && go test ./... && go build ./...` -> pass
 - `cd server/router && go test ./... && go build ./...` -> pass
+- `cd /home/mayvena/anonchat/server/router && go test ./... && go build ./...` -> pass - includes session identity ownership and reconnect regression coverage
 - `cd client/frontend && npm run build` -> pass (with a large chunk-size warning)
+- `cd /home/mayvena/anonchat/client/frontend && npm run build` -> pass - updated server-issued session and authenticated reconnect protocol; existing large chunk-size warning remains
 - `cd client/security-core && cargo check` -> fail
 - `git diff --check` -> reports trailing whitespace in the progress log
 

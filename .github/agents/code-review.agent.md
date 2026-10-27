@@ -48,4 +48,6 @@ Order findings by severity. Do not include proposed patches unless specifically 
 
 Save the review output to a file named `code-review-<timestamp>.md` in the `/codereview` directory.
 
+Add the discovered bugs to `BUGS.md` with a brief description, severity, affected area, and a link to the relevant code. If a bug is resolved, mark it as "Fixed" in `BUGS.md` with a link to the commit that resolved it.
+
 Compare fiondings with BUGS.md and note any new or resolved issues.

@@ -1,9 +1,8 @@
 /**
  * ws.ts – Chat router websocket client.
  *
- * Speaks the router envelopes (`session`, `message`) on `/ws?user_id=...`,
- * reconnects with backoff under the same user id so the router's TTL offline
- * queue is replayed. Nothing is persisted or logged.
+ * Speaks the router envelopes (`session`, `message`) on `/ws`, retaining the
+ * server-issued identity and credential in memory for authenticated reconnects.
  */
 
 export type ConnectionState =
@@ -23,8 +22,8 @@ export interface IncomingMessage {
 
 export interface RouterClientOptions {
   url:             string;
-  userId:          string;
   onState:         (state: ConnectionState) => void;
+  onSession:       (userId: string) => void;
   onMessage:       (msg: IncomingMessage) => void;
   maxAttempts?:    number;
   baseDelayMs?:    number;
@@ -75,6 +74,8 @@ export class RouterClient {
   private retryTimer: number | null = null;
   private closedByUser = false;
   private state: ConnectionState = 'connecting';
+  private userId: string | null = null;
+  private credential: string | null = null;
 
   private readonly maxAttempts: number;
   private readonly baseDelayMs: number;
@@ -91,10 +92,12 @@ export class RouterClient {
     this.clearRetry();
     this.setState(this.attempts === 0 ? 'connecting' : 'reconnecting');
 
-    const url = `${this.opts.url}?user_id=${encodeURIComponent(this.opts.userId)}`;
+    const protocols = this.userId && this.credential
+      ? [`anonchat.v1.auth.${this.userId}.${this.credential}`]
+      : undefined;
     let socket: WebSocket;
     try {
-      socket = new WebSocket(url);
+      socket = protocols ? new WebSocket(this.opts.url, protocols) : new WebSocket(this.opts.url);
     } catch {
       this.scheduleReconnect();
       return;
@@ -103,7 +106,11 @@ export class RouterClient {
 
     socket.addEventListener('message', (ev: MessageEvent) => {
       if (typeof ev.data !== 'string') return;
-      if (this.isSession(ev.data)) {
+      const session = this.parseSession(ev.data);
+      if (session) {
+        this.userId = session.userId;
+        this.credential = session.credential;
+        this.opts.onSession(session.userId);
         this.attempts = 0;
         this.setState('connected');
         return;
@@ -151,12 +158,15 @@ export class RouterClient {
     this.connect();
   }
 
-  private isSession(raw: string): boolean {
+  private parseSession(raw: string): { userId: string; credential: string } | null {
     try {
       const env: unknown = JSON.parse(raw);
-      return isRecord(env) && env.type === 'session';
+      if (!isRecord(env) || env.type !== 'session' || !isRecord(env.payload)) return null;
+      const { user_id: userId, credential } = env.payload;
+      if (typeof userId !== 'string' || !userId || typeof credential !== 'string' || !credential) return null;
+      return { userId, credential };
     } catch {
-      return false;
+      return null;
     }
   }
 

@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -23,6 +25,7 @@ import (
 
 const (
 	offlineTTL            = 300 * time.Second
+	sessionCredentialTTL  = 30 * 24 * time.Hour
 	heartbeatEvery        = 10 * time.Second
 	pongWait              = 20 * time.Second
 	writeWait             = 10 * time.Second
@@ -31,6 +34,7 @@ const (
 	proxyRefreshEvery     = 5 * time.Minute
 	proxyDialTimeout      = 3 * time.Second
 	proxyFetchTimeout     = 8 * time.Second
+	sessionAuthPrefix     = "anonchat.v1.auth."
 )
 
 type inboundMessage struct {
@@ -254,6 +258,87 @@ func (c *client) writePump() {
 
 func offlineMessageKey(toUser, msgID string) string {
 	return "offline:" + toUser + ":" + msgID
+}
+
+func sessionCredentialKey(userID string) string {
+	return "session:credential:" + userID
+}
+
+func credentialDigest(credential string) string {
+	digest := sha256.Sum256([]byte(credential))
+	return base64.RawURLEncoding.EncodeToString(digest[:])
+}
+
+func sessionAuthFromRequest(r *http.Request) (string, string, bool, bool) {
+	var userID, credential string
+	found := false
+	malformed := false
+	for _, protocol := range websocket.Subprotocols(r) {
+		if !strings.HasPrefix(protocol, "anonchat.v1.auth") {
+			continue
+		}
+		if found || !strings.HasPrefix(protocol, sessionAuthPrefix) {
+			return "", "", true, true
+		}
+		parts := strings.Split(protocol, ".")
+		if len(parts) != 5 || parts[0] != "anonchat" || parts[1] != "v1" || parts[2] != "auth" || parts[3] == "" || parts[4] == "" {
+			malformed = true
+			continue
+		}
+		parsedID, err := uuid.Parse(parts[3])
+		if err != nil || parsedID.String() != parts[3] {
+			malformed = true
+			continue
+		}
+		if _, err := base64.RawURLEncoding.DecodeString(parts[4]); err != nil {
+			malformed = true
+			continue
+		}
+		userID, credential = parts[3], parts[4]
+		found = true
+	}
+	return userID, credential, found, malformed
+}
+
+func resolveWebsocketSession(ctx context.Context, r *http.Request, rdb *redis.Client) (string, string, int) {
+	userID, credential, authenticated, malformed := sessionAuthFromRequest(r)
+	if malformed {
+		return "", "", http.StatusUnauthorized
+	}
+	if authenticated {
+		storedDigest, err := rdb.Get(ctx, sessionCredentialKey(userID)).Result()
+		if err == redis.Nil {
+			return "", "", http.StatusUnauthorized
+		}
+		if err != nil {
+			return "", "", http.StatusServiceUnavailable
+		}
+		providedDigest := credentialDigest(credential)
+		if subtle.ConstantTimeCompare([]byte(storedDigest), []byte(providedDigest)) != 1 {
+			return "", "", http.StatusUnauthorized
+		}
+		if err := rdb.Expire(ctx, sessionCredentialKey(userID), sessionCredentialTTL).Err(); err != nil {
+			return "", "", http.StatusServiceUnavailable
+		}
+		return userID, credential, http.StatusOK
+	}
+
+	for attempt := 0; attempt < 3; attempt++ {
+		newID := uuid.NewString()
+		secret := make([]byte, 32)
+		if _, err := rand.Read(secret); err != nil {
+			return "", "", http.StatusInternalServerError
+		}
+		newCredential := base64.RawURLEncoding.EncodeToString(secret)
+		created, err := rdb.SetNX(ctx, sessionCredentialKey(newID), credentialDigest(newCredential), sessionCredentialTTL).Result()
+		if err != nil {
+			return "", "", http.StatusServiceUnavailable
+		}
+		if created {
+			return newID, newCredential, http.StatusOK
+		}
+	}
+	return "", "", http.StatusServiceUnavailable
 }
 
 func getenv(name, fallback string) string {
@@ -510,6 +595,49 @@ func activeProxyNodes() ([]proxyNode, error) {
 	return nodes, nil
 }
 
+func websocketHandler(h *hub) http.HandlerFunc {
+	upgrader := websocket.Upgrader{
+		ReadBufferSize:  2048,
+		WriteBufferSize: 2048,
+		CheckOrigin: func(*http.Request) bool {
+			return true
+		},
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, credential, status := resolveWebsocketSession(r.Context(), r, h.redis)
+		if status != http.StatusOK {
+			http.Error(w, http.StatusText(status), status)
+			return
+		}
+
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+
+		c := &client{
+			userID: userID,
+			conn:   conn,
+			send:   make(chan []byte, 64),
+			done:   make(chan struct{}),
+			hub:    h,
+		}
+		h.register(c)
+		h.deliverOffline(context.Background(), userID)
+
+		ack, err := json.Marshal(outboundEnvelope{Type: "session", Payload: map[string]string{
+			"user_id":    userID,
+			"credential": credential,
+		}})
+		if err == nil {
+			_ = h.deliver(userID, ack)
+		}
+
+		go c.writePump()
+		c.readPump()
+	}
+}
+
 func main() {
 	redisURL := getenv("REDIS_URL", "redis://127.0.0.1:6379")
 	port := getenv("PORT", "8080")
@@ -540,14 +668,6 @@ func main() {
 	}()
 
 	h := newHub(rdb)
-	upgrader := websocket.Upgrader{
-		ReadBufferSize:  2048,
-		WriteBufferSize: 2048,
-		CheckOrigin: func(*http.Request) bool {
-			return true
-		},
-	}
-
 	handler := http.NewServeMux()
 	handler.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -571,35 +691,7 @@ func main() {
 		}
 	})
 
-	handler.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		userID := strings.TrimSpace(r.URL.Query().Get("user_id"))
-		if userID == "" {
-			userID = uuid.NewString()
-		}
-
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			return
-		}
-
-		c := &client{
-			userID: userID,
-			conn:   conn,
-			send:   make(chan []byte, 64),
-			done:   make(chan struct{}),
-			hub:    h,
-		}
-		h.register(c)
-		h.deliverOffline(context.Background(), userID)
-
-		ack, err := json.Marshal(outboundEnvelope{Type: "session", Payload: map[string]string{"user_id": userID}})
-		if err == nil {
-			_ = h.deliver(userID, ack)
-		}
-
-		go c.writePump()
-		c.readPump()
-	})
+	handler.HandleFunc("/ws", websocketHandler(h))
 
 	server := &http.Server{
 		Addr:              ":" + port,

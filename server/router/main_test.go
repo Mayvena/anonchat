@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/go-redis/redis/v8"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 
@@ -85,6 +87,82 @@ func newTestClient(t *testing.T, h *hub, id string, buf int) *client {
 		send:   make(chan []byte, buf),
 		done:   make(chan struct{}),
 		hub:    h,
+	}
+}
+
+func dialSession(t *testing.T, serverURL, query string, protocols ...string) (*websocket.Conn, map[string]string) {
+	t.Helper()
+	endpoint := "ws" + strings.TrimPrefix(serverURL, "http")
+	if query != "" {
+		endpoint += "?" + query
+	}
+	dialer := *websocket.DefaultDialer
+	dialer.Subprotocols = protocols
+	conn, _, err := dialer.Dial(endpoint, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope struct {
+		Type    string            `json:"type"`
+		Payload map[string]string `json:"payload"`
+	}
+	if err := conn.ReadJSON(&envelope); err != nil {
+		_ = conn.Close()
+		t.Fatal(err)
+	}
+	if envelope.Type != "session" {
+		_ = conn.Close()
+		t.Fatalf("expected session acknowledgment, got %q", envelope.Type)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	return conn, envelope.Payload
+}
+
+func TestWebsocketSessionIdentityAndCredentialOwnership(t *testing.T) {
+	h, _ := newTestHub(t)
+	server := httptest.NewServer(websocketHandler(h))
+	t.Cleanup(server.Close)
+
+	requestedID := uuid.NewString()
+	_, first := dialSession(t, server.URL, "user_id="+url.QueryEscape(requestedID))
+	firstID, firstCredential := first["user_id"], first["credential"]
+	if _, err := uuid.Parse(firstID); err != nil || firstID != strings.ToLower(firstID) {
+		t.Fatalf("server did not issue a UUID identity: %q", firstID)
+	}
+	if firstID == requestedID {
+		t.Fatal("server accepted a caller-selected identity")
+	}
+	firstClient := h.getClient(firstID)
+	if firstClient == nil {
+		t.Fatal("new session was not registered")
+	}
+	if len(firstCredential) != 43 {
+		t.Fatalf("expected a 256-bit URL-safe credential, got length %d", len(firstCredential))
+	}
+
+	_, unauthenticated := dialSession(t, server.URL, "user_id="+url.QueryEscape(firstID))
+	if unauthenticated["user_id"] == firstID {
+		t.Fatal("missing credential reclaimed an existing identity")
+	}
+	if h.getClient(firstID) != firstClient {
+		t.Fatal("missing credential replaced the existing session connection")
+	}
+
+	badProtocol := sessionAuthPrefix + firstID + "." + strings.Repeat("A", 43)
+	endpoint := "ws" + strings.TrimPrefix(server.URL, "http")
+	dialer := *websocket.DefaultDialer
+	dialer.Subprotocols = []string{badProtocol}
+	if conn, response, err := dialer.Dial(endpoint, nil); err == nil {
+		_ = conn.Close()
+		t.Fatal("wrong credential unexpectedly connected")
+	} else if response == nil || response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected unauthorized response for wrong credential, got response=%v err=%v", response, err)
+	}
+
+	validProtocol := sessionAuthPrefix + firstID + "." + firstCredential
+	_, reconnected := dialSession(t, server.URL, "", validProtocol)
+	if reconnected["user_id"] != firstID || reconnected["credential"] != firstCredential {
+		t.Fatal("valid credential did not reconnect to the original session")
 	}
 }
 

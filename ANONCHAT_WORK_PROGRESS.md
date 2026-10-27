@@ -881,3 +881,50 @@
 ### Final Outcome
 - Status: complete
 - Summary: Added and documented a root startup script for the local backend and frontend dev server.
+
+## Session: 2026-10-27 - Router session identity takeover mitigation
+
+### Task Summary
+- Prevent websocket callers from selecting or reclaiming another user's router identity without its unguessable owner credential.
+
+### Scope
+- Files:
+  - server/router/main.go
+  - server/router/main_test.go
+  - client/frontend/src/ws.ts
+  - client/frontend/src/main.ts
+  - BUGS.md
+  - ANONCHAT_WORK_PROGRESS.md
+- Subsystems:
+  - router
+  - frontend
+
+### Plan
+1. Issue server-generated UUID identities and validate reconnect credentials before websocket upgrade.
+2. Keep the credential in frontend memory and send it in a websocket subprotocol, not the URL.
+3. Add takeover regression tests, run router/frontend validation, and update the bug record.
+
+### Progress Log
+- Confirmed `/ws` accepted `user_id` directly and `hub.register` replaced any existing connection under that ID.
+- Added Redis-TTL ownership records containing only a SHA-256 digest; new sessions receive a random 256-bit credential and server-generated UUID.
+- Added authenticated reconnect using `Sec-WebSocket-Protocol`; the frontend retains the returned ID and credential only in `RouterClient` memory.
+- Added handler-level coverage for server-issued IDs, ignored caller IDs, missing/wrong credential rejection from an existing identity, and valid credential reconnect.
+- Updated bug 2 to Fixed after the focused behavior checks passed.
+
+### Validation Performed
+- `cd /home/mayvena/anonchat/server/router && go test ./... && go build ./...` -> pass - router regression tests and build succeeded.
+- `cd /home/mayvena/anonchat/client/frontend && npm run build` -> pass - TypeScript and Vite production build succeeded; existing large Three.js chunk warning remains.
+- `git -c core.whitespace=cr-at-eol diff --check -- client/frontend/src/main.ts client/frontend/src/ws.ts server/router/main.go server/router/main_test.go` -> pass - touched source files pass whitespace validation with the repository's CRLF convention.
+- Plain `git diff --check` -> reports CRLF carriage returns on newly edited frontend lines; no line-ending normalization was performed.
+
+### Risks / Blockers
+- Session credentials are bearer secrets: a party that obtains a credential can reconnect as that identity until its Redis ownership record expires. Credentials are not persisted by the frontend and are not logged.
+- Redis session ownership lasts 30 days without renewal by the client; a later connection after expiry receives a new identity rather than reclaiming the expired one.
+- No live browser/router deployment smoke test was run; router handler tests and production frontend build were used.
+
+### Next Actions
+1. Consider secure OS-backed persistence only if identity must survive a full client restart; the current contract intentionally keeps credentials in memory only.
+
+### Final Outcome
+- Status: complete
+- Summary: New router sessions now receive unguessable server-issued identities, and reconnect requires the matching credential; arbitrary query IDs cannot claim or replace an existing session.

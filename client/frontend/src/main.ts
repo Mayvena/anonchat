@@ -91,12 +91,10 @@ async function main(): Promise<void> {
   const terminal = new TerminalPanel(terminalEl);
   const chat     = new ChatPanel();
 
-  // Ephemeral identity: lives in memory only, new on every launch.
-  const myUserId = createId().slice(0, 8);
+  let myUserId = 'connecting';
 
   const router = new RouterClient({
     url:    ROUTER_WS_URL,
-    userId: myUserId,
     onState: (state) => {
       chat.setConnectionState(state);
       terminal.append({
@@ -104,6 +102,16 @@ async function main(): Promise<void> {
         message:     `Chat router: ${state}`,
         timestampMs: Date.now(),
       });
+    },
+    onSession: (userId) => {
+      myUserId = userId;
+      chat.setUsers([
+        { id: 'me', displayName: `You: ${myUserId}` },
+        { id: 'guard', displayName: 'Guard Node' },
+        { id: 'middle', displayName: 'Middle Node' },
+        { id: 'exit', displayName: 'Exit Node' },
+        { id: 'system', displayName: 'System' },
+      ]);
     },
     onMessage: (msg) => {
       if (!chat.hasUser(msg.from)) {
@@ -144,7 +152,7 @@ async function main(): Promise<void> {
   router.connect();
 
   chat.setUsers([
-    { id: 'me', displayName: `You: ${myUserId}` },
+    { id: 'me', displayName: 'You: connecting' },
     { id: 'guard', displayName: 'Guard Node' },
     { id: 'middle', displayName: 'Middle Node' },
     { id: 'exit', displayName: 'Exit Node' },
