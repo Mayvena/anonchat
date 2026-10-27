@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -153,5 +155,45 @@ func TestSlowConsumerDoesNotPanic(t *testing.T) {
 	case <-c.done:
 	case <-time.After(time.Second):
 		t.Fatal("done channel not closed")
+	}
+}
+
+func TestRefreshProxyRegistryStoresBuiltSet(t *testing.T) {
+	_, mr := newTestHub(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+
+	proxySrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("127.0.0.1:" + strconv.Itoa(ln.Addr().(*net.TCPAddr).Port) + "\n"))
+	}))
+	defer proxySrv.Close()
+
+	t.Setenv("PROXY_SOURCES", proxySrv.URL)
+
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	if err := refreshProxyRegistry(context.Background(), rdb); err != nil {
+		t.Fatalf("refreshProxyRegistry returned error: %v", err)
+	}
+
+	stored, err := rdb.Get(context.Background(), proxyRegistryRedisKey).Result()
+	if err != nil {
+		t.Fatalf("expected registry value in Redis: %v", err)
+	}
+	if !strings.Contains(stored, "127.0.0.1:") || !strings.Contains(stored, "public_key_b64") {
+		t.Fatalf("unexpected registry payload: %s", stored)
 	}
 }

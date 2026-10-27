@@ -492,6 +492,48 @@
 - Status: partial
 - Summary: The missing Rust producer integration is implemented; compilation and live event delivery remain blocked by unavailable local toolchains.
 
+## Session: 2026-10-27 11:45 +02:00 - Go proxy registry refresh
+
+### Task Summary
+- Add the example proxy-discovery logic in the project runtime using Go rather than Python so the router can populate and refresh a live proxy registry in Redis.
+
+### Scope
+- Files:
+	- server/router/main.go
+	- server/router/main_test.go
+	- ANONCHAT_WORK_PROGRESS.md
+- Subsystems:
+	- router
+	- infra
+
+### Plan
+1. Add source parsing and validation for live proxy lists in the router.
+2. Probe reachable SOCKS endpoints, attach metadata, and store the result in Redis.
+3. Reuse the stored registry through the existing active-proxy API.
+4. Run the focused router test suite to verify behavior.
+
+### Progress Log
+- 11:45 Inspected the router registry endpoint and confirmed the insert path existed without any live refresh mechanism.
+- 11:46 Implemented Go proxy source fetching, normalization, runtime validation, and Redis writeback using the same operational pattern as the provided script.
+- 11:47 Added the router refresh loop and Redis-backed `anonchat:proxies` key so `/api/proxies/active` can serve live data.
+- 11:48 Added a regression test covering source fetch, successful validation, and Redis persistence.
+- 11:49 Verified the router suite passes with `cd server/router && go test ./...`.
+
+### Validation Performed
+- `cd /home/mayvena/anonchat/server/router && go test ./...` -> pass - router tests succeeded, including the new proxy registry refresh regression.
+
+### Risks / Blockers
+- Public proxy sources can be flaky or rate-limited; the refresh is best-effort and will degrade gracefully to an empty registry when no live nodes are reachable.
+- The implementation does not persist proxy secrets; it only stores generated metadata and a random public key placeholder for registry use.
+
+### Next Actions
+1. Wire a production-safe proxy source list and real node metadata into deployment configuration.
+2. Replace placeholder key material with the actual node public keys in deployment-managed `ACTIVE_PROXIES` data when the live network is configured.
+
+### Final Outcome
+- Status: complete
+- Summary: The router now refreshes a live proxy registry in Go, stores it in Redis memory, and exposes it through the existing active-proxy API without using Python.
+
 ## Session: 2026-10-26 - Deployment readiness and local validation
 
 ### Task Summary
