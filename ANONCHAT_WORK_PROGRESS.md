@@ -608,6 +608,47 @@
 - Status: partial
 - Summary: Development Compose stack is built, running, and smoke-verified. Go proxy/router and frontend validations pass; security-core Rust source errors remain. Production hardening is not performed.
 
+## Session: 2026-10-27 11:00 +02:00 - Fix plain-JSON chat transport bypass
+
+### Task Summary
+- Fix the first unresolved bug by making the chat send path invoke the Tauri onion packet builder instead of sending raw JSON through the router websocket.
+
+### Scope
+- Files:
+  - client/frontend/src/main.ts
+  - client/frontend/src/chat.ts
+  - client/frontend/src/ws.ts
+- Subsystems:
+  - frontend
+  - tauri
+
+### Plan
+1. Confirm the user-send path bypasses the onion packet builder and inspect the contract it is expected to honor.
+2. Route outbound message sends through `build_onion_packet_from_registry` and encode the resulting packet into the websocket payload.
+3. Preserve the existing UI connection flow and validate the frontend still builds cleanly.
+
+### Progress Log
+- 11:00 Confirmed the root cause: `chat.onSend` used `RouterClient.send` directly and never invoked the Tauri onion command.
+- 11:02 Updated the send handler to build the onion packet before dispatching via the router websocket.
+- 11:03 Made the chat panel support async send handlers without falling back to plaintext on transport errors.
+- 11:04 Increased the websocket payload cap to cover the fixed-size encrypted packet flow while keeping the router contract unchanged.
+- 11:05 Re-ran the focused frontend build and it succeeded with the onion-send changes.
+
+### Validation Performed
+- `cd /home/mayvena/anonchat/client/frontend && npm run build` -> pass - TypeScript and Vite production build succeeded after the fix.
+
+### Risks / Blockers
+- Full end-to-end runtime verification remains pending because the Tauri desktop runtime and downstream router endpoint were not exercised in this session.
+- The browser path still depends on a valid proxy registry endpoint at `VITE_PROXY_REGISTRY_URL` or the default local HTTPS endpoint.
+
+### Next Actions
+1. Exercise the Tauri desktop app against a live router and proxy registry to confirm the encrypted payload is accepted end to end.
+2. Revisit the remaining bug list starting with the router identity takeover issue after this fix is validated in the runtime path.
+
+### Final Outcome
+- Status: complete
+- Summary: The frontend no longer sends message bodies as raw JSON through the router path; it now invokes the onion packet builder and only transmits the encrypted payload through the existing websocket flow.
+
 ## Session: 2026-10-27 09:29 EET - Debian 13 installer support
 
 ### Task Summary

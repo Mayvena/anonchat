@@ -81,6 +81,11 @@ Do not move Go networking behavior into Rust unless the task explicitly requests
 
 For any non-trivial ANONCHAT task (multi-step changes, cross-subsystem changes, or security-sensitive edits), create and maintain a progress tracker file at project root named `ANONCHAT_WORK_PROGRESS.md`.
 
+When resolving or verifying a bug in `BUGS.md`:
+- Update the bug entry to reflect its final status (`Fixed`, `In Progress`, or `Open`).
+- Add a brief fix summary in the relevant bug entry when the root cause and remediation are confirmed.
+- If the bug is fixed, mark the status in the bug list before closing the task or leaving the workspace.
+
 When to create:
 
 - Create the file at task start if it does not exist.

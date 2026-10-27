@@ -31,7 +31,7 @@ export interface RouterClientOptions {
   maxDelayMs?:     number;
 }
 
-const MAX_BODY_CHARS = 2000;
+const MAX_BODY_CHARS = 8192;
 const DEGRADED_BUFFER_BYTES = 64 * 1024;
 
 function isRecord(v: unknown): v is Record<string, unknown> {

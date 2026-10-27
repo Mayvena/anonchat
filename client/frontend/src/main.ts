@@ -15,6 +15,8 @@ import { createId } from './id';
 
 const ROUTER_WS_URL: string =
   (import.meta.env?.VITE_ROUTER_WS_URL as string | undefined) ?? 'ws://127.0.0.1:8080/ws';
+const PROXY_REGISTRY_URL: string =
+  (import.meta.env?.VITE_PROXY_REGISTRY_URL as string | undefined) ?? 'https://127.0.0.1:8080/api/proxies/active';
 const MESSAGE_TTL_SECONDS = 30;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -68,6 +70,14 @@ function toProxyChain(p: ProxyChainChangedPayload): ProxyChain {
   };
 }
 
+function encodeOnionPacket(packet: number[]): string {
+  let binary = '';
+  for (const byte of packet) {
+    binary += String.fromCharCode(byte & 0xff);
+  }
+  return btoa(binary);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Entry point
 // ─────────────────────────────────────────────────────────────────────────────
@@ -108,12 +118,27 @@ async function main(): Promise<void> {
     },
   });
 
-  chat.onSend((to, body) => {
+  chat.onSend(async (to, body) => {
     if (body.length > MAX_BODY_CHARS) return false;
     const id = createId();
-    if (!router.send(id, to, body)) return false;
-    chat.addMessage({ id, fromUserId: 'me', text: `→ ${to}: ${body}`, ttlSeconds: MESSAGE_TTL_SECONDS });
-    return true;
+
+    try {
+      const packet = await invoke<number[]>('build_onion_packet_from_registry', {
+        registryUrl: PROXY_REGISTRY_URL,
+        message: body,
+      });
+      const encryptedBody = encodeOnionPacket(packet);
+      if (!router.send(id, to, encryptedBody)) return false;
+      chat.addMessage({ id, fromUserId: 'me', text: `→ ${to}: ${body}`, ttlSeconds: MESSAGE_TTL_SECONDS });
+      return true;
+    } catch (err: unknown) {
+      terminal.append({
+        level: 'error',
+        message: `Onion packet build failed: ${String(err)}`,
+        timestampMs: Date.now(),
+      });
+      return false;
+    }
   });
   chat.onRetry(() => router.retry());
   router.connect();

@@ -4,6 +4,7 @@ This document captures the confirmed issues found during the project review. It 
 
 ## 1. Chat traffic is sent in plain JSON instead of through the onion transport
 
+- Status: Fixed
 - Severity: High
 - Affected area: client/frontend/src/main.ts, client/frontend/src/ws.ts, client/src-tauri/src/ipc_bridge.rs
 - Issue:
@@ -12,8 +13,10 @@ This document captures the confirmed issues found during the project review. It 
   - The UI sends directly to the router: [client/frontend/src/main.ts](client/frontend/src/main.ts#L110-L115)
   - The WebSocket client emits raw JSON `{ id, to, body }`: [client/frontend/src/ws.ts](client/frontend/src/ws.ts#L121-L131)
   - The Tauri bridge exposes the onion packet command, but it is not used in the chat path: [client/src-tauri/src/ipc_bridge.rs](client/src-tauri/src/ipc_bridge.rs#L220-L247)
+- Fix:
+  The client send path now invokes `build_onion_packet_from_registry`, encodes the resulting fixed-size onion packet, and only sends the encrypted payload through the router websocket. The UI no longer falls back to plaintext JSON on transport failure.
 - Impact:
-  This violates the product’s intended anonymous relay design and bypasses the built-in onion transport and proxy chain flow.
+  This restores the intended anonymous relay design and ensures the built-in onion transport and proxy chain flow are used for chat payloads.
 
 ## 2. Router accepts arbitrary user IDs and allows connection takeover
 

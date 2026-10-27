@@ -7,7 +7,7 @@ export type ChatConnectionState =
   | 'reconnecting'
   | 'failed';
 
-export type SendHandler = (to: string, body: string) => boolean;
+export type SendHandler = (to: string, body: string) => boolean | Promise<boolean>;
 
 const STATE_LABEL: Record<ChatConnectionState, string> = {
   connecting:   'CONNECTING',
@@ -111,10 +111,13 @@ export class ChatPanel {
     const body = this.bodyInput.value.trim();
     if (!to || !body || !this.sendHandler) return;
 
-    if (this.sendHandler(to, body)) {
-      this.bodyInput.value = '';
-    }
-    this.bodyInput.focus();
+    void (async () => {
+      const ok = await this.sendHandler?.(to, body);
+      if (ok) {
+        this.bodyInput.value = '';
+      }
+      this.bodyInput.focus();
+    })();
   }
 
   setUsers(users: ChatUser[]): void {
