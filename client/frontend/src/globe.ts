@@ -40,7 +40,7 @@ export interface ProxyChain {
 
 const COLOR = {
   sky:          '#000000',
-  globe:        0x060614,
+  globe:        0x10243a,
   atmosphere:   '#0d2f7a',
   arcGuardMid:  '#00d4ff',   // cyan
   arcMidExit:   '#00ffa0',   // teal-green
@@ -113,8 +113,10 @@ export class GlobeRenderer {
 
     // Custom material: no external texture, solid near-black sphere.
     (this.globe.globeMaterial() as THREE.MeshPhongMaterial).color.setHex(COLOR.globe);
-    (this.globe.globeMaterial() as THREE.MeshPhongMaterial).specular = new THREE.Color(0x111133);
-    (this.globe.globeMaterial() as THREE.MeshPhongMaterial).shininess = 8;
+    const globeMaterial = this.globe.globeMaterial() as THREE.MeshPhongMaterial;
+    globeMaterial.emissive.setHex(0x07172a);
+    globeMaterial.specular = new THREE.Color(0x315070);
+    globeMaterial.shininess = 12;
 
     this.scene.add(this.globe as unknown as THREE.Object3D);
 

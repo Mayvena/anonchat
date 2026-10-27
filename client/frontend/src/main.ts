@@ -14,10 +14,48 @@ import { RouterClient, MAX_BODY_CHARS } from './ws';
 import { createId } from './id';
 
 const ROUTER_WS_URL: string =
-  (import.meta.env?.VITE_ROUTER_WS_URL as string | undefined) ?? 'ws://127.0.0.1:8080/ws';
+  (import.meta.env?.VITE_ROUTER_WS_URL as string | undefined) ??
+  `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.hostname}:8080/ws`;
 const PROXY_REGISTRY_URL: string =
-  (import.meta.env?.VITE_PROXY_REGISTRY_URL as string | undefined) ?? 'https://127.0.0.1:8080/api/proxies/active';
+  (import.meta.env?.VITE_PROXY_REGISTRY_URL as string | undefined) ?? '';
+const SERVICE_SETTINGS_KEY = 'anonchat.service-endpoints.v1';
 const MESSAGE_TTL_SECONDS = 30;
+
+interface ServiceEndpoints {
+  routerWebSocketUrl: string;
+  proxyRegistryUrl: string;
+}
+
+function parseServiceEndpoints(routerValue: string, registryValue: string): ServiceEndpoints | null {
+  try {
+    const router = new URL(routerValue.trim());
+    const registry = new URL(registryValue.trim());
+    if (router.protocol !== 'wss:' || registry.protocol !== 'https:') return null;
+    if (router.username || router.password || router.hash || registry.username || registry.password || registry.hash) return null;
+    return { routerWebSocketUrl: router.toString(), proxyRegistryUrl: registry.toString() };
+  } catch {
+    return null;
+  }
+}
+
+function loadServiceEndpoints(): ServiceEndpoints | null {
+  try {
+    const saved = localStorage.getItem(SERVICE_SETTINGS_KEY);
+    if (saved) {
+      const value: unknown = JSON.parse(saved);
+      if (typeof value === 'object' && value !== null && 'routerWebSocketUrl' in value && 'proxyRegistryUrl' in value) {
+        const endpoints = value as ServiceEndpoints;
+        return parseServiceEndpoints(endpoints.routerWebSocketUrl, endpoints.proxyRegistryUrl);
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return PROXY_REGISTRY_URL
+    ? parseServiceEndpoints(import.meta.env?.VITE_ROUTER_WS_URL ?? '', PROXY_REGISTRY_URL)
+    : null;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Payload types (must mirror Rust src-tauri/src/events.rs)
@@ -90,49 +128,90 @@ async function main(): Promise<void> {
   const globe    = new GlobeRenderer(canvas);
   const terminal = new TerminalPanel(terminalEl);
   const chat     = new ChatPanel();
+  const settingsButton = document.getElementById('service-settings') as HTMLButtonElement;
+  const settingsDialog = document.getElementById('service-settings-dialog') as HTMLDialogElement;
+  const settingsForm = document.getElementById('service-settings-form') as HTMLFormElement;
+  const routerInput = document.getElementById('router-endpoint') as HTMLInputElement;
+  const registryInput = document.getElementById('registry-endpoint') as HTMLInputElement;
+  const settingsError = document.getElementById('service-settings-error') as HTMLElement;
 
   let myUserId = 'connecting';
+  let hasProxyChain = false;
+  let endpoints = loadServiceEndpoints();
+  let router: RouterClient | null = null;
+  let eventStreamReady = false;
 
-  const router = new RouterClient({
-    url:    ROUTER_WS_URL,
-    onState: (state) => {
-      chat.setConnectionState(state);
+  const connectRouter = (url: string): void => {
+    router?.close();
+    chat.setConnectionState('connecting');
+    router = new RouterClient({
+      url,
+      onState: (state) => {
+        chat.setConnectionState(state);
+        if (!hasProxyChain) {
+          statusEl.textContent = state === 'connected'
+            ? 'ROUTER CONNECTED · ROUTE PENDING'
+            : `ROUTER ${state.toUpperCase()}`;
+        }
+        terminal.append({
+          level:       state === 'failed' ? 'error' : state === 'connected' ? 'info' : 'warn',
+          message:     `Chat router: ${state}`,
+          timestampMs: Date.now(),
+        });
+      },
+      onSession: (userId) => {
+        myUserId = userId;
+        chat.setUsers([
+          { id: 'me', displayName: `You: ${myUserId}` },
+          { id: 'guard', displayName: 'Guard Node' },
+          { id: 'middle', displayName: 'Middle Node' },
+          { id: 'exit', displayName: 'Exit Node' },
+          { id: 'system', displayName: 'System' },
+        ]);
+      },
+      onMessage: (msg) => {
+        if (!chat.hasUser(msg.from)) {
+          chat.addUser({ id: msg.from, displayName: msg.from });
+        }
+        chat.addMessage({
+          id:         msg.id,
+          fromUserId: msg.from,
+          text:       msg.body,
+          ttlSeconds: MESSAGE_TTL_SECONDS,
+        });
+      },
+    });
+    router.connect();
+  };
+
+  const selectInitialRoute = (): void => {
+    if (!endpoints) return;
+    void invoke('select_proxy_chain_from_registry', { registryUrl: endpoints.proxyRegistryUrl }).catch(() => {
       terminal.append({
-        level:       state === 'failed' ? 'error' : state === 'connected' ? 'info' : 'warn',
-        message:     `Chat router: ${state}`,
+        level: 'warn',
+        message: 'Initial proxy route unavailable; route remains pending.',
         timestampMs: Date.now(),
       });
-    },
-    onSession: (userId) => {
-      myUserId = userId;
-      chat.setUsers([
-        { id: 'me', displayName: `You: ${myUserId}` },
-        { id: 'guard', displayName: 'Guard Node' },
-        { id: 'middle', displayName: 'Middle Node' },
-        { id: 'exit', displayName: 'Exit Node' },
-        { id: 'system', displayName: 'System' },
-      ]);
-    },
-    onMessage: (msg) => {
-      if (!chat.hasUser(msg.from)) {
-        chat.addUser({ id: msg.from, displayName: msg.from });
-      }
-      chat.addMessage({
-        id:         msg.id,
-        fromUserId: msg.from,
-        text:       msg.body,
-        ttlSeconds: MESSAGE_TTL_SECONDS,
-      });
-    },
-  });
+    });
+  };
 
   chat.onSend(async (to, body) => {
+    if (!isTauri()) {
+      terminal.append({
+        level: 'error',
+        message: 'Message sending requires the ANONCHAT desktop app; browser mode cannot build onion packets.',
+        timestampMs: Date.now(),
+      });
+      return false;
+    }
+
+    if (!endpoints || !router) return false;
     if (body.length > MAX_BODY_CHARS) return false;
     const id = createId();
 
     try {
       const packet = await invoke<number[]>('build_onion_packet_from_registry', {
-        registryUrl: PROXY_REGISTRY_URL,
+        registryUrl: endpoints.proxyRegistryUrl,
         message: body,
       });
       const encryptedBody = encodeOnionPacket(packet);
@@ -148,8 +227,35 @@ async function main(): Promise<void> {
       return false;
     }
   });
-  chat.onRetry(() => router.retry());
-  router.connect();
+  chat.onRetry(() => router?.retry());
+
+  settingsButton.addEventListener('click', () => {
+    routerInput.value = endpoints?.routerWebSocketUrl ?? '';
+    registryInput.value = endpoints?.proxyRegistryUrl ?? '';
+    settingsError.textContent = '';
+    settingsDialog.showModal();
+  });
+  document.getElementById('service-settings-cancel')?.addEventListener('click', () => settingsDialog.close());
+  settingsForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const nextEndpoints = parseServiceEndpoints(routerInput.value, registryInput.value);
+    if (!nextEndpoints) {
+      settingsError.textContent = 'Enter a valid wss:// router URL and https:// registry URL without embedded credentials.';
+      return;
+    }
+    try {
+      localStorage.setItem(SERVICE_SETTINGS_KEY, JSON.stringify(nextEndpoints));
+    } catch {
+      settingsError.textContent = 'Settings could not be saved in this profile.';
+      return;
+    }
+    endpoints = nextEndpoints;
+    settingsDialog.close();
+    if (isTauri() && eventStreamReady) {
+      connectRouter(endpoints.routerWebSocketUrl);
+      selectInitialRoute();
+    }
+  });
 
   chat.setUsers([
     { id: 'me', displayName: 'You: connecting' },
@@ -167,11 +273,13 @@ async function main(): Promise<void> {
       message: 'Tauri event streams are unavailable in browser mode.',
       timestampMs: Date.now(),
     });
+    connectRouter(ROUTER_WS_URL);
     return;
   }
 
   // ── Proxy chain rotation ────────────────────────────────────────────────
   await listen<ProxyChainChangedPayload>('proxy-layer-changed', ({ payload }) => {
+    hasProxyChain = true;
     globe.updateChain(toProxyChain(payload));
 
     const g = payload.guard.countryCode;
@@ -232,6 +340,7 @@ async function main(): Promise<void> {
   // ── Kick the Rust event emitter ─────────────────────────────────────────
   try {
     await invoke('start_proxy_event_stream');
+    eventStreamReady = true;
     terminal.append({ level: 'info', message: 'Event streams active.', timestampMs: Date.now() });
   } catch (err: unknown) {
     terminal.append({
@@ -239,6 +348,18 @@ async function main(): Promise<void> {
       message:     `Failed to start event stream: ${String(err)}`,
       timestampMs: Date.now(),
     });
+    return;
+  }
+
+  if (endpoints) {
+    routerInput.value = endpoints.routerWebSocketUrl;
+    registryInput.value = endpoints.proxyRegistryUrl;
+    connectRouter(endpoints.routerWebSocketUrl);
+    selectInitialRoute();
+  } else {
+    statusEl.textContent = 'SERVICE ENDPOINTS REQUIRED';
+    terminal.append({ level: 'warn', message: 'Configure remote service endpoints to connect.', timestampMs: Date.now() });
+    settingsDialog.showModal();
   }
 }
 

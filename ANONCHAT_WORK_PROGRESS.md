@@ -1,5 +1,253 @@
 # ANONCHAT Work Progress
 
+## Session: 2026-10-27 16:15 EET - Windows Desktop Endpoint Setup
+
+### Task Summary
+- Begin the Windows desktop client implementation with configurable remote router and proxy-registry endpoints.
+
+### Scope
+- Files:
+  - client/frontend/src/main.ts
+  - client/frontend/index.html
+  - client/src-tauri/tauri.conf.json
+  - ANONCHAT_WORK_PROGRESS.md
+- Subsystems:
+  - frontend
+  - tauri
+
+### Plan
+1. Add endpoint validation, a first-run settings dialog, and non-secret endpoint persistence.
+2. Connect the Tauri client to the configured remote services and allow HTTPS/WSS in the app CSP.
+3. Run focused frontend validation and record Windows-specific remaining work.
+
+### Progress Log
+- 16:12 Confirmed the existing Windows desktop uses Tauri 2, while service defaults and CSP were localhost-only; found existing user edits and preserved them.
+- 16:14 Added accessible endpoint settings, validation requiring WSS/HTTPS, local storage of endpoint URLs only, and router/route startup after configuration.
+- 16:15 Updated CSP for secure remote connections and built the frontend successfully.
+
+### Validation Performed
+- `npm run build` (from `client/frontend`) -> pass - TypeScript check and Vite production build; existing Three.js chunk-size warning remains.
+- Frontend diagnostics for `client/frontend/src/main.ts` -> pass - no errors reported.
+- Windows-native Tauri build, portable ZIP packaging, and Windows runtime smoke tests -> not run - this workspace runs on Linux; a native Windows host/runner is required.
+
+### Risks / Blockers
+- The current CSP permits HTTPS and WSS connections by scheme because endpoint hosts are user-configurable; the app only requests the configured endpoints, but origin-specific policy would require a runtime CSP strategy or a native networking bridge.
+- The Tauri native Windows build, WebView2 availability handling, portable archive creation, and Windows 10/11 behavior remain unverified.
+
+### Next Actions
+1. Add and exercise the Windows x64 build/portable packaging workflow on a native Windows runner.
+2. Verify whether the chosen archive includes or documents the WebView2 runtime requirement.
+3. Smoke-test configured remote WSS/HTTPS endpoints and encrypted send on clean Windows 10 and 11 machines.
+
+### Final Outcome
+- Status: partial
+- Summary: First-run and editable secure endpoint configuration is implemented and frontend validation passes; native Windows packaging and runtime verification remain.
+
+## Session: 2026-10-27 15:18 EET - Initial Globe Route Selection
+
+### Task Summary
+- Populate the globe route at startup instead of waiting for the first onion packet build.
+
+### Scope
+- Files:
+  - client/frontend/src/main.ts
+  - client/src-tauri/src/ipc_bridge.rs
+  - client/src-tauri/src/lib.rs
+  - BUGS.md
+  - ANONCHAT_WORK_PROGRESS.md
+- Subsystems:
+  - frontend
+  - tauri
+
+### Plan
+1. Trace route event publication and distinguish it from static chat node entries.
+2. Add startup route selection and publish the existing proxy-chain event.
+3. Run focused frontend and Rust validation, then update the bug status.
+
+### Progress Log
+- 15:18 Confirmed the globe route event is only published during message packet construction; the chat node entries are placeholders.
+- 15:18 Added a Tauri command to select and emit an initial route and invoked it after event listeners start.
+- 15:19 Frontend build and standalone security-core check passed; the Tauri check was blocked by missing `pkg-config`/GTK libraries, and `cargo fmt --check` reported existing formatting differences in `ipc_bridge.rs`.
+- 15:19 Recorded bug 14 as Blocked pending a host with native Tauri build prerequisites.
+
+### Validation Performed
+- `npm run build` (from `client/frontend`) -> pass - TypeScript check and Vite production build; existing Three.js chunk-size warning remains.
+- `cd ../src-tauri && cargo check` (from `client/frontend`) -> blocked - stopped in `glib-sys` because `pkg-config` and GTK development libraries are unavailable.
+- `cargo check` (from `client/security-core`) -> pass - validates the exported `fetch_and_select_chain` API; two pre-existing Rust warnings remain.
+- `cargo fmt --check` (from `client/src-tauri`) -> fail - reports formatting differences in existing sections of `ipc_bridge.rs`; no formatter rewrite was applied to avoid unrelated formatting churn.
+- `git -c core.whitespace=cr-at-eol diff --check` -> pass - no whitespace errors.
+
+### Risks / Blockers
+- The startup route fetch requires the configured proxy registry to be reachable and to return at least three distinct countries. Without that, the route correctly remains pending.
+
+### Next Actions
+1. Run the Tauri check on a host with `pkg-config` and GTK development libraries installed.
+
+### Final Outcome
+- Status: blocked
+- Summary: Initial route selection is wired to startup, but app-level Rust validation cannot complete without native Tauri build prerequisites.
+
+## Session: 2026-10-27 15:05 EET - Globe Visible Before Route
+
+### Task Summary
+- Make the base globe visible while the router is connected and proxy-route data is still pending.
+
+### Scope
+- Files:
+  - client/frontend/src/globe.ts
+  - BUGS.md
+  - ANONCHAT_WORK_PROGRESS.md
+- Subsystems:
+  - frontend
+
+### Plan
+1. Trace base globe rendering and the route-pending state.
+2. Increase the base globe contrast without coupling rendering to route events.
+3. Build the frontend and record the bug status.
+
+### Progress Log
+- 15:05 Confirmed the renderer draws continuously, but its near-black surface has no land data and blends into the black scene.
+- 15:05 Increased the globe surface contrast and added a subtle emissive tint; recorded bug 13 as In Progress.
+- 15:06 Frontend TypeScript check and production build passed; marked bug 13 Resolved.
+
+### Validation Performed
+- `npm run build` (from repository root) -> fail - the root has no `package.json`; this invocation did not validate the change.
+- `cd client/frontend && npm run build` -> pass - TypeScript check and Vite production build; existing Three.js chunk-size warning remains.
+
+### Risks / Blockers
+- The globe remains intentionally featureless until route-specific node and arc data arrives; this change improves the visibility of the base sphere only.
+
+### Next Actions
+- None.
+
+### Final Outcome
+- Status: complete
+- Summary: Base globe is now visibly separated from the black background while waiting for route data; frontend build passed.
+
+## Session: 2026-10-27 14:28 EET - LAN Router WebSocket
+
+### Task Summary
+- Fix browser clients opened over LAN using a router WebSocket loopback address that points to the viewer device.
+
+### Scope
+- Files:
+  - client/frontend/src/main.ts
+  - BUGS.md
+  - ANONCHAT_WORK_PROGRESS.md
+- Subsystems:
+  - frontend
+
+### Plan
+1. Confirm the frontend host binding and router port mapping.
+2. Derive the default router WebSocket scheme and hostname from the current page while retaining the explicit environment override.
+3. Build the frontend and record the result and final bug status.
+
+### Progress Log
+- Confirmed Vite binds to all interfaces and Docker publishes router port 8080, while the frontend default uses `127.0.0.1`.
+- Changed the fallback router URL to use the page hostname with `ws` or `wss`; retained `VITE_ROUTER_WS_URL` overrides and documented LAN port reachability.
+- Marked bug 12 Resolved after the frontend build passed.
+
+### Validation Performed
+- `npm run build` (from repository root) -> not run - the frontend package is located in `client/frontend`; a subsequent invocation from that package was used.
+- `cd client/frontend && npm run build` -> not run - terminal was already in `client/frontend`, so this relative path was unavailable.
+- `npm run build` (from `client/frontend`) -> pass - TypeScript check and Vite production build; existing large Three.js chunk warning remains.
+- `git -c core.whitespace=cr-at-eol diff --check` -> pass - no whitespace errors.
+- Frontend diagnostics for `client/frontend/src/main.ts` -> pass - no errors reported.
+
+### Risks / Blockers
+- The router must remain reachable on port 8080 from the browser device; firewall and LAN isolation settings remain external prerequisites. HTTPS deployments require a TLS-terminating WebSocket endpoint configured through `VITE_ROUTER_WS_URL`.
+
+### Next Actions
+- None.
+
+### Final Outcome
+- Status: complete
+- Summary: Browser clients now connect to the router on the frontend's host using the correct WebSocket scheme; frontend build passed.
+
+## Session: 2026-10-27 14:17 EET - Globe Connection Status
+
+### Task Summary
+- Make the globe status reflect router connectivity while no proxy-chain snapshot has been received.
+
+### Scope
+- Files:
+  - client/frontend/src/main.ts
+  - BUGS.md
+  - ANONCHAT_WORK_PROGRESS.md
+- Subsystems:
+  - frontend
+
+### Plan
+1. Trace router and proxy-chain status ownership.
+2. Update the globe status from router state until a route snapshot arrives.
+3. Build the frontend and record the result and final bug status.
+
+### Progress Log
+- Started investigation; confirmed the router state callback does not currently update the globe status.
+- Updated router-state handling to display connecting/connected/degraded/reconnecting/failed status until a chain snapshot arrives; chain events continue to render route countries.
+- Recorded bug 11 as Resolved after the focused frontend build passed.
+
+### Validation Performed
+- `npm run build` (from repository root) -> fail - the repository root has no `package.json`; this invocation did not validate the change.
+- `cd client/frontend && npm run build` -> pass - TypeScript check and Vite production build; existing large Three.js chunk warning remains.
+
+### Risks / Blockers
+- The router being connected does not mean a proxy route has been selected; the status explicitly reports `ROUTE PENDING` until a chain event arrives.
+
+### Next Actions
+- None.
+
+### Final Outcome
+- Status: complete
+- Summary: Globe status reflects router connection while awaiting a proxy route, then continues showing the active route; frontend build passed.
+
+## Session: 2026-10-27 13:58 EET - Desktop Chat Launch
+
+### Task Summary
+- Provide a documented desktop launch path for encrypted chat after the standard browser launch rejects message sends.
+
+### Scope
+- Files:
+  - start.sh
+  - README.md
+  - BUGS.md
+  - client/frontend/package.json
+  - client/frontend/package-lock.json
+- Subsystems:
+  - frontend
+  - tauri
+
+### Plan
+1. Confirm the default launcher and Tauri IPC ownership.
+2. Add an opt-in desktop launch mode while retaining browser preview.
+3. Validate launcher syntax, frontend build, and desktop CLI configuration; update the bug record.
+
+### Progress Log
+- 13:55 Confirmed `./start.sh` runs Vite in a regular browser and the encrypted send path requires the Tauri bridge.
+- 13:57 Added the local Tauri CLI dependency; verified `npm exec tauri -- --version` reports tauri-cli 2.12.4.
+- 13:58 Added `./start.sh --desktop`, clarified browser preview limits, and recorded bug 10 as In Progress.
+- 14:01 Corrected the CLI dependency location and Tauri working directory; the native CLI recognizes the app project.
+- 14:02 Restored the existing `protocol-asset` feature after CLI build side effects and recorded the missing Linux build prerequisite.
+
+### Validation Performed
+- `npm exec tauri -- --version` -> pass - project-local Tauri CLI is executable.
+- `npm exec tauri -- dev --help` -> pass - confirms the development command accepts a config path.
+- `bash -n ../../start.sh` (from `client/frontend`) -> pass - desktop launcher parses.
+- `npm run build` (from `client/frontend`) -> pass - TypeScript and Vite production build; existing large Three.js chunk warning remains.
+- `../frontend/node_modules/.bin/tauri build --no-bundle` (from `client/src-tauri`) -> blocked - CLI recognizes the project, but Rust build stops because `pkg-config` is not installed; Linux GTK/WebKit development prerequisites are therefore unavailable.
+- `git -c core.whitespace=cr-at-eol diff --check` -> pass - current patch has no whitespace errors.
+- `npm run build` from repository root -> not applicable - frontend has its own package directory; the successful build was run from `client/frontend`.
+
+### Risks / Blockers
+- Native desktop startup has not been verified because this host lacks `pkg-config` and likely the Linux GTK/WebKit development packages.
+
+### Next Actions
+1. Install Tauri's Linux build prerequisites on the host and run `./start.sh --desktop`.
+
+### Final Outcome
+- Status: partial
+- Summary: Added a documented native desktop launch path and preserved browser preview mode; frontend build and launcher syntax pass, but native build validation is blocked by missing host packages.
+
 ## Session: 2026-10-27 13:39 EET - Optional Chat Recipient
 
 ### Task Summary
@@ -1134,3 +1382,41 @@
 ### Final Outcome
 - Status: complete
 - Summary: The frontend no longer requires a recipient user ID and sends to a shared online-only room; direct-message TTL delivery remains unchanged.
+
+## Session: 2026-10-27 13:45 EET - Browser-Mode Onion Send Error
+
+### Task Summary
+- Prevent browser-mode chat sends from calling Tauri IPC without an available Tauri runtime.
+
+### Scope
+- Files:
+  - client/frontend/src/main.ts
+  - BUGS.md
+  - ANONCHAT_WORK_PROGRESS.md
+- Subsystems:
+  - frontend
+
+### Plan
+1. Confirm the onion-send path and browser/Tauri runtime boundary.
+2. Add a runtime guard and clear user-facing log entry.
+3. Build the frontend and record the bug's final status.
+
+### Progress Log
+- 13:45 Confirmed the send handler calls Tauri `invoke` without checking runtime, while browser mode is supported for initialization.
+- 13:45 Added bug 9 as In Progress and guarded packet construction with a browser-mode error message.
+- 13:46 Frontend TypeScript check and production build passed; marked bug 9 Resolved.
+
+### Validation Performed
+- `npm run build` (from repository root) -> fail - no root `package.json`; this did not validate the change.
+- `cd client/frontend && npm run build` -> pass - TypeScript check and Vite production build; existing Three.js chunk-size warning remains.
+- `git -c core.whitespace=cr-at-eol diff --check` -> pass - whitespace check with existing CRLF line endings recognized.
+
+### Risks / Blockers
+- Browser mode remains available for UI preview, but encrypted message sending requires the Tauri desktop runtime.
+
+### Next Actions
+1. None.
+
+### Final Outcome
+- Status: complete
+- Summary: Browser-mode sends now fail before invoking Tauri IPC with an explicit explanation; frontend build passed.

@@ -16,6 +16,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             ipc_bridge::start_proxy_event_stream,
             ipc_bridge::emit_core_log,
+            ipc_bridge::select_proxy_chain_from_registry,
             ipc_bridge::build_onion_packet_from_registry,
         ])
         .run(tauri::generate_context!())

@@ -24,7 +24,7 @@ use tokio::sync::{Mutex, broadcast};
 use crate::events::{
     CoreLogPayload, GeoCoordinates, LogLevel, ProxyChainChangedPayload, ProxyNodeInfo,
 };
-use security_core::fetch_and_encrypt_chain;
+use security_core::{fetch_and_encrypt_chain, fetch_and_select_chain};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared state injected via Tauri's managed state mechanism
@@ -244,6 +244,27 @@ pub async fn build_onion_packet_from_registry(
     });
 
     Ok(packet.to_vec())
+}
+
+/// Select and publish an initial proxy route so the frontend can render the
+/// active chain before the user sends a message.
+#[tauri::command]
+pub async fn select_proxy_chain_from_registry(
+    registry_url: String,
+    proxy_bus: State<'_, ProxyEventBus>,
+    log_bus: State<'_, LogEventBus>,
+) -> Result<(), String> {
+    let chain = fetch_and_select_chain(&registry_url).await.map_err(|_| {
+        log_bus.publish(CoreLogPayload {
+            level: LogLevel::Error,
+            message: "Proxy chain selection failed".to_owned(),
+            timestamp_ms: now_ms(),
+        });
+        "Proxy chain selection failed".to_owned()
+    })?;
+
+    proxy_bus.publish(chain_payload(&chain));
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -113,6 +113,10 @@ The following checks were run during review:
 - `cd client/frontend && npm run build` -> pass (with a large chunk-size warning)
 - `cd /home/mayvena/anonchat/client/frontend && npm run build` -> pass - updated server-issued session and authenticated reconnect protocol; existing large chunk-size warning remains
 - `cd client/frontend && npm run build` -> pass - validates optional recipient input and frontend TypeScript; existing large chunk-size warning remains
+- `cd client/frontend && npm run build` -> pass - verifies globe status follows router connectivity until the proxy chain is available; existing Three.js chunk-size warning remains
+- `npm run build` (from `client/frontend`) -> pass - verifies page-host-derived router WebSocket URL for LAN/browser use; existing Three.js chunk-size warning remains
+- `cd client/frontend && npm run build` -> pass - verifies the base globe material contrast update; existing Three.js chunk-size warning remains
+- `git -c core.whitespace=cr-at-eol diff --check` -> pass - no whitespace errors after LAN router URL update
 - `cd client/security-core && cargo test -- --nocapture` -> pass
 - `git diff --check` -> pass - current workspace diff is clean
 
@@ -127,6 +131,77 @@ The following checks were run during review:
   - The composer markup contains only the message textarea and send button: [client/frontend/index.html](client/frontend/index.html#L395-L400)
   - The chat panel hard-codes `ROOM_RECIPIENT_ID` for every send: [client/frontend/src/chat.ts](client/frontend/src/chat.ts#L110-L115)
 - Solution: Restored a labeled optional recipient user ID field; trimmed blank input maps to the reserved `room` destination, while a selected ID is passed to the existing private-message route. The frontend TypeScript check and production build pass.
+
+## 9. Browser-mode chat send fails during onion packet construction
+
+- Status: Resolved
+- Severity: Medium
+- Affected area: client/frontend/src/main.ts
+- Issue:
+  Sending a chat message from the browser-served frontend logs `Cannot read properties of undefined (reading 'invoke')` during onion packet construction.
+- Evidence:
+  The send handler calls Tauri `invoke` even though the app has a browser-mode path: [client/frontend/src/main.ts](client/frontend/src/main.ts#L138-L148)
+- Solution: The send handler now checks for the Tauri runtime before packet construction and reports that browser mode cannot send encrypted messages. `cd client/frontend && npm run build` passes.
+
+## 10. Standard local launch opens a send-disabled browser frontend
+
+- Status: Blocked
+- Severity: Medium
+- Affected area: start.sh, README.md, client/frontend
+- Issue:
+  The documented `./start.sh` flow opens the frontend in a regular browser, but chat sending requires the native Tauri bridge that builds onion packets. Users can connect to the router but every send is rejected in browser mode.
+- Evidence:
+  - The standard launcher starts Vite in browser mode: [start.sh](start.sh)
+  - The send handler requires Tauri before it builds an onion packet: [client/frontend/src/main.ts](client/frontend/src/main.ts#L130-L137)
+- Solution: Added `./start.sh --desktop` to launch the frontend through Tauri and clarified that regular browser mode is preview-only. Frontend build and launcher syntax pass, but native build validation is blocked because this host lacks `pkg-config` and the Linux GTK/WebKit development prerequisites.
+
+## 11. Globe status remains connecting after router connection
+
+- Status: Resolved
+- Severity: Medium
+- Affected area: client/frontend/src/main.ts, client/src-tauri/src/ipc_bridge.rs
+- Issue:
+  The globe status continues to display `CONNECTING…` after the frontend's router WebSocket has connected.
+- Evidence:
+  Router connection state is handled in [client/frontend/src/main.ts](client/frontend/src/main.ts), while the globe status is only updated by the proxy-chain event handler. The proxy-chain event is published during onion packet construction in [client/src-tauri/src/ipc_bridge.rs](client/src-tauri/src/ipc_bridge.rs).
+- Impact:
+  The globe status does not reflect the frontend's actual connection state before a proxy route has been selected.
+- Solution: The globe status now follows the router connection state until a proxy-chain snapshot arrives, then continues to display the active route. `cd client/frontend && npm run build` passes.
+
+## 12. LAN browser cannot connect to the chat router
+
+- Status: Resolved
+- Severity: Medium
+- Affected area: client/frontend/src/main.ts
+- Issue:
+  When the frontend is opened from another device on the LAN, both connection indicators remain at `CONNECTING` and the router WebSocket does not connect.
+- Evidence:
+  The frontend binds Vite to all interfaces, but the default router URL targets `127.0.0.1:8080`, which resolves to the device running the browser: [start.sh](start.sh), [client/frontend/src/main.ts](client/frontend/src/main.ts).
+- Impact:
+  LAN users cannot establish a router session unless they manually configure the router WebSocket URL.
+- Solution: The default WebSocket URL now derives its hostname from the page URL and selects `wss` for HTTPS, while preserving `VITE_ROUTER_WS_URL` overrides. README documents that port 8080 must be reachable; `npm run build` in `client/frontend` passes.
+
+## 13. Globe surface is indistinguishable from the background before route selection
+
+- Status: Resolved
+- Severity: Medium
+- Affected area: client/frontend/src/globe.ts
+- Issue:
+  The globe panel can show `ROUTER CONNECTED · ROUTE PENDING` while the globe itself appears blank until proxy-chain data arrives.
+- Evidence:
+  The renderer continuously draws a globe with no land data, but its near-black material (`0x060614`) is rendered against a black scene: [client/frontend/src/globe.ts](client/frontend/src/globe.ts).
+- Solution: Increased the base globe material contrast and added a subtle emissive tint so the sphere is visible against the black scene before route data arrives. `cd client/frontend && npm run build` passes.
+
+## 14. Globe route stays pending until the first message is sent
+
+- Status: Blocked
+- Severity: Medium
+- Affected area: client/frontend/src/main.ts, client/src-tauri/src/ipc_bridge.rs, client/src-tauri/src/lib.rs
+- Issue:
+  The globe remains at `ROUTE PENDING` without drawing node paths even though the chat panel displays Guard, Middle, and Exit entries.
+- Evidence:
+  The chat entries are initialized as static users, while the `proxy-layer-changed` event is only published after `build_onion_packet_from_registry` selects a chain: [client/frontend/src/main.ts](client/frontend/src/main.ts), [client/src-tauri/src/ipc_bridge.rs](client/src-tauri/src/ipc_bridge.rs).
+- Solution: Added startup proxy-chain selection and publication through the existing `proxy-layer-changed` event. Frontend and security-core checks pass, but Tauri validation is blocked because this host lacks `pkg-config` and the required GTK development libraries.
 
 ## Notes
 

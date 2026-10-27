@@ -20,10 +20,25 @@ Start the backend and frontend development server together from the project root
 ```
 
 The script builds and starts the Docker Compose backend, then starts Vite on
-all network interfaces at port `1420`. Open `http://127.0.0.1:1420/` on the
-host, or `http://<host-lan-ip>:1420/` from another device on the same LAN.
-Vite prints the available network URLs when it starts. Press Ctrl+C to stop the
-frontend; stop backend containers separately with `docker compose down`.
+all network interfaces at port `1420`. This browser mode is for UI preview and
+does not send chat messages because onion packets are built by the native Rust
+bridge. Open `http://127.0.0.1:1420/` on the host, or
+`http://<host-lan-ip>:1420/` from another device on the same LAN. Vite prints
+the available network URLs when it starts. The browser connects to the router
+at the same hostname on port `8080`; that port must be reachable from the
+client device. HTTPS deployments must provide a TLS-terminating WebSocket
+endpoint and set `VITE_ROUTER_WS_URL` to its `wss://` URL; the local Compose
+router serves plain WebSockets. Press Ctrl+C to stop the frontend; stop backend
+containers separately with `docker compose down`.
+
+To send encrypted chat messages, launch the Tauri desktop app instead:
+
+```bash
+./start.sh --desktop
+```
+
+This starts the frontend on loopback and opens the native application. The host
+must have Rust and the platform prerequisites required by Tauri installed.
 
 If the host firewall blocks inbound connections, allow port `1420` only from
 your LAN subnet. For a host on `192.168.0.0/24` using UFW:
