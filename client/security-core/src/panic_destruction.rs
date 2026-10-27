@@ -27,8 +27,6 @@ use std::fs::{File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::Path;
 
-use rand::RngCore;
-use rand::rngs::OsRng;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 /// Number of overwrite passes over the database file.
@@ -117,7 +115,7 @@ fn overwrite_db_file(db_path: &Path) -> std::io::Result<()> {
         let mut remaining = file_len;
         while remaining > 0 {
             let chunk = remaining.min(WRITE_BUF_SIZE as u64) as usize;
-            OsRng.fill_bytes(&mut buf[..chunk]);
+            getrandom::fill(&mut buf[..chunk]).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("entropy failed: {e}")))?;
 
             file.write_all(&buf[..chunk])?;
 

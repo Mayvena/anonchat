@@ -1,14 +1,14 @@
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use libsignal_client::{
-    DeviceId, IdentityKeyPair, KeyPair, KyberPreKeyRecord, PreKeyBundle, PreKeyId,
-    SignedPreKeyId, SignedPreKeyRecord, Timestamp, kem,
+    DeviceId, GenericSignedPreKey, IdentityKeyPair, KeyPair, KyberPreKeyRecord, PreKeyBundle,
+    PreKeyId, PreKeyRecord, SignedPreKeyId, SignedPreKeyRecord, Timestamp, kem,
 };
-use rand::{RngCore, rngs::OsRng};
+use rand::{TryRngCore as _, rngs::OsRng};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
-const DEFAULT_DEVICE_ID: u32 = 1;
+const DEFAULT_DEVICE_ID: u8 = 1;
 const DEFAULT_PREKEY_ID: u32 = 1001;
 const DEFAULT_SIGNED_PREKEY_ID: u32 = 2001;
 const DEFAULT_KYBER_PREKEY_ID: u32 = 3001;
@@ -42,11 +42,27 @@ pub struct DeviceBootstrapOutput {
 #[derive(Debug, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 struct SecretEnvelope {
     registration_id: u32,
-    device_id: u32,
+    device_id: u8,
     nickname_signing_key: Vec<u8>,
     signal_identity_pair: Vec<u8>,
     signed_prekey_record: Vec<u8>,
     kyber_prekey_record: Vec<u8>,
+    one_time_prekey_record: Vec<u8>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct SerializedPreKeyBundle {
+    registration_id: u32,
+    device_id: u8,
+    pre_key_id: Option<u32>,
+    pre_key_public: Option<Vec<u8>>,
+    signed_pre_key_id: u32,
+    signed_pre_key_public: Vec<u8>,
+    signed_pre_key_signature: Vec<u8>,
+    kyber_pre_key_id: u32,
+    kyber_pre_key_public: Vec<u8>,
+    kyber_pre_key_signature: Vec<u8>,
+    identity_key: Vec<u8>,
 }
 
 #[derive(Debug, Error)]
@@ -100,31 +116,29 @@ fn load_existing(
         .map_err(|_| BootstrapError::InvalidData("invalid Ed25519 private key bytes".to_owned()))?;
     let signing_key = SigningKey::from_bytes(&signing_key_bytes);
     let verify_key = signing_key.verifying_key();
-
     let nickname_signature = signing_key.sign(temp_nickname.as_bytes());
 
-    let identity_pair = IdentityKeyPair::deserialize(&envelope.signal_identity_pair)
+    let identity_pair = IdentityKeyPair::try_from(envelope.signal_identity_pair.as_slice())
         .map_err(|e| BootstrapError::Crypto(format!("failed to deserialize identity pair: {e}")))?;
-
     let signed_prekey = SignedPreKeyRecord::deserialize(&envelope.signed_prekey_record).map_err(
         |e| BootstrapError::Crypto(format!("failed to deserialize signed pre-key: {e}")),
     )?;
-
     let kyber_prekey = KyberPreKeyRecord::deserialize(&envelope.kyber_prekey_record).map_err(
         |e| BootstrapError::Crypto(format!("failed to deserialize kyber pre-key: {e}")),
+    )?;
+    let one_time_prekey = PreKeyRecord::deserialize(&envelope.one_time_prekey_record).map_err(
+        |e| BootstrapError::Crypto(format!("failed to deserialize one-time pre-key: {e}")),
     )?;
 
     let bundle = build_prekey_bundle(
         envelope.registration_id,
         envelope.device_id,
         &identity_pair,
+        &one_time_prekey,
         &signed_prekey,
         &kyber_prekey,
     )?;
-
-    let serialized_bundle = bundle
-        .serialize()
-        .map_err(|e| BootstrapError::Crypto(format!("failed to serialize pre-key bundle: {e}")))?;
+    let serialized_bundle = prekey_bundle_to_bytes(&bundle)?;
 
     envelope.zeroize();
 
@@ -152,20 +166,22 @@ fn generate_first_bootstrap(
     store: &dyn EncryptedDeviceMaterialStore,
     protector: &dyn KeyMaterialProtector,
 ) -> Result<DeviceBootstrapOutput, BootstrapError> {
-    let mut rng = OsRng;
+    let mut registration_id_bytes = [0u8; 4];
+    getrandom::fill(&mut registration_id_bytes)
+        .map_err(|e| BootstrapError::Crypto(format!("registration id entropy failed: {e}")))?;
+    let registration_id = u32::from_le_bytes(registration_id_bytes);
 
-    let mut registration_id_buf = [0u8; 4];
-    rng.fill_bytes(&mut registration_id_buf);
-    let registration_id = u32::from_le_bytes(registration_id_buf);
-
-    let nickname_signing = SigningKey::generate(&mut rng);
+    let mut nickname_seed = [0u8; 32];
+    getrandom::fill(&mut nickname_seed)
+        .map_err(|e| BootstrapError::Crypto(format!("nickname seed entropy failed: {e}")))?;
+    let nickname_signing = SigningKey::from_bytes(&nickname_seed);
     let nickname_verify = nickname_signing.verifying_key();
     let nickname_signature = nickname_signing.sign(temp_nickname.as_bytes());
 
+    let mut rng = OsRng.unwrap_err();
     let identity_pair = IdentityKeyPair::generate(&mut rng);
     let signed_prekey_pair = KeyPair::generate(&mut rng);
     let signed_prekey_public = signed_prekey_pair.public_key.serialize();
-
     let signed_prekey_signature = identity_pair
         .private_key()
         .calculate_signature(&signed_prekey_public, &mut rng)
@@ -185,17 +201,21 @@ fn generate_first_bootstrap(
     )
     .map_err(|e| BootstrapError::Crypto(format!("kyber pre-key generation failed: {e}")))?;
 
+    let one_time_prekey_pair = KeyPair::generate(&mut rng);
+    let one_time_prekey = PreKeyRecord::new(PreKeyId::from(DEFAULT_PREKEY_ID), &one_time_prekey_pair);
+    let one_time_prekey_serialized = one_time_prekey
+        .serialize()
+        .map_err(|e| BootstrapError::Crypto(format!("one-time pre-key serialization failed: {e}")))?;
+
     let bundle = build_prekey_bundle(
         registration_id,
         DEFAULT_DEVICE_ID,
         &identity_pair,
+        &one_time_prekey,
         &signed_prekey,
         &kyber_prekey,
     )?;
-
-    let serialized_bundle = bundle
-        .serialize()
-        .map_err(|e| BootstrapError::Crypto(format!("pre-key bundle serialization failed: {e}")))?;
+    let serialized_bundle = prekey_bundle_to_bytes(&bundle)?;
 
     let signed_prekey_serialized = signed_prekey
         .serialize()
@@ -203,10 +223,7 @@ fn generate_first_bootstrap(
     let kyber_prekey_serialized = kyber_prekey
         .serialize()
         .map_err(|e| BootstrapError::Crypto(format!("kyber pre-key serialization failed: {e}")))?;
-
-    let identity_serialized = identity_pair
-        .serialize()
-        .map_err(|e| BootstrapError::Crypto(format!("identity pair serialization failed: {e}")))?;
+    let identity_serialized = identity_pair.serialize().to_vec();
 
     let mut envelope = SecretEnvelope {
         registration_id,
@@ -215,6 +232,7 @@ fn generate_first_bootstrap(
         signal_identity_pair: identity_serialized,
         signed_prekey_record: signed_prekey_serialized,
         kyber_prekey_record: kyber_prekey_serialized,
+        one_time_prekey_record: one_time_prekey_serialized,
     };
 
     let plaintext = serde_json::to_vec(&envelope)
@@ -230,7 +248,7 @@ fn generate_first_bootstrap(
     Ok(DeviceBootstrapOutput {
         artifact: BootstrapArtifact {
             registration_id,
-            device_id: DEFAULT_DEVICE_ID,
+            device_id: u32::from(DEFAULT_DEVICE_ID),
             signed_temp_nickname: nickname_signature.to_vec(),
             temp_nickname_pubkey: nickname_verify.to_bytes().to_vec(),
             prekey_bundle: serialized_bundle,
@@ -242,32 +260,38 @@ fn generate_first_bootstrap(
 
 fn build_prekey_bundle(
     registration_id: u32,
-    device_id: u32,
+    device_id: u8,
     identity_pair: &IdentityKeyPair,
+    one_time_prekey: &PreKeyRecord,
     signed_prekey: &SignedPreKeyRecord,
     kyber_prekey: &KyberPreKeyRecord,
 ) -> Result<PreKeyBundle, BootstrapError> {
-    let one_time_prekey = KeyPair::generate(&mut OsRng);
-
     let signed_pub = signed_prekey
         .public_key()
         .map_err(|e| BootstrapError::Crypto(format!("signed pre-key public extraction failed: {e}")))?;
     let signed_sig = signed_prekey
         .signature()
         .map_err(|e| BootstrapError::Crypto(format!("signed pre-key signature extraction failed: {e}")))?;
-
     let kyber_pub = kyber_prekey
         .public_key()
         .map_err(|e| BootstrapError::Crypto(format!("kyber public extraction failed: {e}")))?;
     let kyber_sig = kyber_prekey
         .signature()
         .map_err(|e| BootstrapError::Crypto(format!("kyber signature extraction failed: {e}")))?;
+    let prekey_public = one_time_prekey
+        .public_key()
+        .map_err(|e| BootstrapError::Crypto(format!("one-time pre-key public extraction failed: {e}")))?;
 
     PreKeyBundle::new(
         registration_id,
         DeviceId::new(device_id)
             .map_err(|e| BootstrapError::InvalidData(format!("invalid device id: {e}")))?,
-        Some((PreKeyId::from(DEFAULT_PREKEY_ID), one_time_prekey.public_key)),
+        Some((
+            one_time_prekey.id().map_err(|e| {
+                BootstrapError::Crypto(format!("one-time pre-key id error: {e}"))
+            })?,
+            prekey_public,
+        )),
         SignedPreKeyId::from(DEFAULT_SIGNED_PREKEY_ID),
         signed_pub,
         signed_sig,
@@ -277,6 +301,63 @@ fn build_prekey_bundle(
         *identity_pair.identity_key(),
     )
     .map_err(|e| BootstrapError::Crypto(format!("pre-key bundle construction failed: {e}")))
+}
+
+fn prekey_bundle_to_bytes(bundle: &PreKeyBundle) -> Result<Vec<u8>, BootstrapError> {
+    let serialized = SerializedPreKeyBundle {
+        registration_id: bundle
+            .registration_id()
+            .map_err(|e| BootstrapError::Crypto(format!("registration id error: {e}")))?,
+        device_id: u8::from(
+            bundle
+                .device_id()
+                .map_err(|e| BootstrapError::Crypto(format!("device id error: {e}")))?,
+        ),
+        pre_key_id: bundle
+            .pre_key_id()
+            .map_err(|e| BootstrapError::Crypto(format!("pre-key id error: {e}")))?
+            .map(|id| u32::from(id)),
+        pre_key_public: bundle
+            .pre_key_public()
+            .map_err(|e| BootstrapError::Crypto(format!("pre-key public error: {e}")))?
+            .map(|key| key.serialize().to_vec()),
+        signed_pre_key_id: u32::from(
+            bundle
+                .signed_pre_key_id()
+                .map_err(|e| BootstrapError::Crypto(format!("signed pre-key id error: {e}")))?,
+        ),
+        signed_pre_key_public: bundle
+            .signed_pre_key_public()
+            .map_err(|e| BootstrapError::Crypto(format!("signed pre-key public error: {e}")))?
+            .serialize()
+            .to_vec(),
+        signed_pre_key_signature: bundle
+            .signed_pre_key_signature()
+            .map_err(|e| BootstrapError::Crypto(format!("signed pre-key signature error: {e}")))?
+            .to_vec(),
+        kyber_pre_key_id: u32::from(
+            bundle
+                .kyber_pre_key_id()
+                .map_err(|e| BootstrapError::Crypto(format!("kyber pre-key id error: {e}")))?,
+        ),
+        kyber_pre_key_public: bundle
+            .kyber_pre_key_public()
+            .map_err(|e| BootstrapError::Crypto(format!("kyber pre-key public error: {e}")))?
+            .serialize()
+            .to_vec(),
+        kyber_pre_key_signature: bundle
+            .kyber_pre_key_signature()
+            .map_err(|e| BootstrapError::Crypto(format!("kyber pre-key signature error: {e}")))?
+            .to_vec(),
+        identity_key: bundle
+            .identity_key()
+            .map_err(|e| BootstrapError::Crypto(format!("identity key error: {e}")))?
+            .serialize()
+            .to_vec(),
+    };
+
+    serde_json::to_vec(&serialized)
+        .map_err(|e| BootstrapError::Serialization(format!("failed to encode pre-key bundle: {e}")))
 }
 
 fn now_millis() -> u64 {
@@ -310,7 +391,6 @@ mod tests {
         }
     }
 
-    // Test-only reversible transform; real protectors must use an AEAD.
     struct XorProtector(u8);
 
     impl KeyMaterialProtector for XorProtector {
@@ -367,6 +447,21 @@ mod tests {
         let err = bootstrap_or_load("   ", &store, &XorProtector(1)).unwrap_err();
         assert!(matches!(err, BootstrapError::InvalidData(_)));
         assert!(store.blob.borrow().is_none());
+    }
+
+    #[test]
+    fn bootstrap_persists_one_time_prekey_record_for_bundle_reuse() {
+        let store = MemStore::default();
+        let protector = XorProtector(0x7B);
+        let _ = bootstrap_or_load("temp-nick", &store, &protector).unwrap();
+
+        let encrypted = store.blob.borrow().clone().unwrap();
+        let plaintext = protector.decrypt(&encrypted).unwrap();
+        let envelope: SecretEnvelope = serde_json::from_slice(&plaintext).unwrap();
+
+        assert!(!envelope.one_time_prekey_record.is_empty());
+        let record = PreKeyRecord::deserialize(&envelope.one_time_prekey_record).unwrap();
+        assert_eq!(u32::from(record.id().unwrap()), DEFAULT_PREKEY_ID);
     }
 
     #[test]

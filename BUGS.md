@@ -63,6 +63,7 @@ This document captures the confirmed issues found during the project review. It 
 
 ## 5. Pre-key bundle advertises a one-time pre-key that is not retained or recoverable
 
+- Status: Resolved
 - Severity: Medium
 - Affected area: client/security-core/src/device_bootstrap.rs
 - Issue:
@@ -72,9 +73,11 @@ This document captures the confirmed issues found during the project review. It 
   - The corresponding serialized key material is stored only in the immediate local temporary variables, not in the persisted envelope: [client/security-core/src/device_bootstrap.rs](client/security-core/src/device_bootstrap.rs#L200-L228)
 - Impact:
   The advertised bundle is structurally inconsistent with the device’s actual retrievable key material.
+- Solution: The bootstrap flow now persists the one-time pre-key protobuf in the encrypted envelope and reconstructs the bundle from that retained record so the bundle remains recoverable across reloads.
 
 ## 6. Security-core does not compile against the current Signal API
 
+- Status: Resolved
 - Severity: Medium
 - Affected area: client/security-core/src/device_bootstrap.rs, client/security-core/Cargo.toml
 - Issue:
@@ -84,6 +87,7 @@ This document captures the confirmed issues found during the project review. It 
   - Build fails with `IdentityKeyPair::deserialize`, `SignedPreKeyRecord::deserialize`, `KyberPreKeyRecord::deserialize`, and `PreKeyBundle::serialize` errors, plus `OsRng` not satisfying `CryptoRng`: the cargo check output was run and failed for these reasons.
 - Impact:
   The security-core cannot be built or tested in its current state; the feature is effectively blocked.
+- Solution: The bootstrap now uses the current libsignal record APIs and the project’s compatible rand/rand_core setup, and the crate passes its focused Rust test suite with the retained one-time pre-key persistence regression covered.
 
 ## 7. Repository project metadata contains trailing whitespace in the new progress log
 
@@ -106,7 +110,7 @@ The following checks were run during review:
 - `cd /home/mayvena/anonchat/server/router && go test ./... && go build ./...` -> pass - verifies offline message keys survive failed writes and clear after successful writes
 - `cd client/frontend && npm run build` -> pass (with a large chunk-size warning)
 - `cd /home/mayvena/anonchat/client/frontend && npm run build` -> pass - updated server-issued session and authenticated reconnect protocol; existing large chunk-size warning remains
-- `cd client/security-core && cargo check` -> fail
+- `cd client/security-core && cargo test -- --nocapture` -> pass
 - `git diff --check` -> reports trailing whitespace in the progress log
 
 ## Notes

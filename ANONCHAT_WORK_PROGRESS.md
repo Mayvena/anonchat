@@ -687,6 +687,51 @@
 - Status: complete
 - Summary: The frontend no longer sends message bodies as raw JSON through the router path; it now invokes the onion packet builder and only transmits the encrypted payload through the existing websocket flow.
 
+## Session: 2026-10-27 13:30 +00:00 - Security-core bootstrap fix and validation
+
+### Task Summary
+- Fix the first unresolved Rust bug by persisting and reusing the one-time pre-key in the device bootstrap envelope and by bringing the code into line with the current libsignal and rand compatibility contract.
+
+### Scope
+- Files:
+	- client/security-core/src/device_bootstrap.rs
+	- client/security-core/src/onion/cipher.rs
+	- client/security-core/src/onion/node_selector.rs
+	- client/security-core/src/panic_destruction.rs
+	- client/security-core/Cargo.toml
+	- BUGS.md
+	- ANONCHAT_WORK_PROGRESS.md
+- Subsystems:
+	- security-core
+
+### Plan
+1. Confirm the root cause behind the missing one-time pre-key record and the Signal/rand API drift.
+2. Persist the one-time key in the encrypted bootstrap envelope and rebuild the bundle from that stored record.
+3. Replace incompatible direct `OsRng` calls with OS-entropy generation that matches the active library versions.
+4. Validate the focused crate test suite and update the bug log with the final verified status.
+
+### Progress Log
+- 13:30 Confirmed the root cause: the bootstrap bundle was built from a fresh in-memory one-time key that was never saved, and the crate was also still calling legacy `rand`/`rand_core` APIs from older assumptions.
+- 13:31 Persisted the serialized one-time pre-key into the encrypted bootstrap envelope and reloaded that key when constructing the bundle.
+- 13:32 Switched the crate’s direct entropy calls to `getrandom`/matching APIs so they do not cross incompatible `rand_core` versions between libsignal and x25519.
+- 13:33 Fixed the regression assertion to check the actual persisted protobuf record instead of looking for a raw numeric string inside the serialized JSON blob.
+- 13:34 Re-ran the security-core test suite and it passed.
+
+### Validation Performed
+- `cd /home/mayvena/anonchat/client/security-core && cargo test -- --nocapture` -> pass - 15 unit tests passed, 1 regression test for persisted one-time pre-key reuse passed.
+
+### Risks / Blockers
+- None for the targeted bootstrap fix.
+- Remaining warnings are non-blocking (`unused_mut` and an unnecessary unsafe block), but they are not required for this bug fix.
+
+### Next Actions
+1. Keep the bootstrap path and record serialization contract under regression coverage.
+2. Decide whether to clean the remaining warnings in a follow-up pass if the project wants stricter `cargo clippy` or warning-only CI.
+
+### Final Outcome
+- Status: complete
+- Summary: The security-core bootstrap now retains and reuses the one-time pre-key record, the crate compiles against the current Signal/rand-compatible API surface, and the targeted regression test passes.
+
 ## Session: 2026-10-27 09:29 EET - Debian 13 installer support
 
 ### Task Summary

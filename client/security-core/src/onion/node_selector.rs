@@ -5,9 +5,6 @@
 use std::collections::HashMap;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use rand::RngCore;
-use rand::rngs::OsRng;
-use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use x25519_dalek::PublicKey as X25519PublicKey;
@@ -106,8 +103,6 @@ pub(crate) async fn fetch_proxy_list(server_url: &str) -> Result<Vec<ProxyNode>,
 /// Selection is uniform-random via `OsRng`; each call may return a different
 /// combination.
 pub fn select_chain_from(nodes: Vec<ProxyNode>) -> Result<NodeChain, NodeSelectError> {
-    let mut rng = OsRng;
-
     // Group nodes by country code. Keys are sorted for deterministic shuffling
     // reproducibility in tests (the shuffle itself is still random).
     let mut by_country: HashMap<String, Vec<ProxyNode>> = HashMap::new();
@@ -123,18 +118,18 @@ pub fn select_chain_from(nodes: Vec<ProxyNode>) -> Result<NodeChain, NodeSelectE
         return Err(NodeSelectError::InsufficientDiversity { got: country_count });
     }
 
-    // Shuffle country list with a fresh random permutation.
     let mut countries: Vec<String> = by_country.keys().cloned().collect();
-    countries.shuffle(&mut rng);
+    for i in (1..countries.len()).rev() {
+        let j = random_index(i + 1);
+        countries.swap(i, j);
+    }
 
-    // Randomly pick one node from each of the first three countries.
     let pick = |country: &str| -> ProxyNode {
         let pool = by_country.get(country).expect("country must exist");
-        // pool is non-empty by construction; unwrap is safe.
-        pool.choose(&mut OsRng).expect("pool is non-empty").clone()
+        let idx = random_index(pool.len());
+        pool[idx].clone()
     };
 
-    // Consume 3 separate OsRng draws to ensure independence.
     let guard = pick(&countries[0]);
     let middle = pick(&countries[1]);
     let exit = pick(&countries[2]);
@@ -142,11 +137,17 @@ pub fn select_chain_from(nodes: Vec<ProxyNode>) -> Result<NodeChain, NodeSelectE
     Ok(NodeChain { guard, middle, exit })
 }
 
-/// Generate a random `u64` via OsRng – useful for request IDs without
-/// introducing any external dependency.
+fn random_index(limit: usize) -> usize {
+    let mut buf = [0u8; 8];
+    getrandom::fill(&mut buf).expect("OS entropy failed");
+    let value = u64::from_le_bytes(buf) as u128;
+    (value % limit as u128) as usize
+}
+
+/// Generate a random `u64` via OS entropy.
 pub fn random_request_id() -> u64 {
     let mut buf = [0u8; 8];
-    OsRng.fill_bytes(&mut buf);
+    getrandom::fill(&mut buf).expect("OS entropy failed");
     u64::from_le_bytes(buf)
 }
 

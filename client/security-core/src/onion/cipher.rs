@@ -21,8 +21,6 @@ use aes_gcm::{
     aead::{Aead, KeyInit},
 };
 use hkdf::Hkdf;
-use rand::RngCore;
-use rand::rngs::OsRng;
 use sha2::Sha256;
 use thiserror::Error;
 use x25519_dalek::{EphemeralSecret, PublicKey as X25519PublicKey};
@@ -120,7 +118,8 @@ fn pad_to_inner(message: &[u8]) -> Result<[u8; INNER_SIZE], OnionError> {
     buf[4..4 + message.len()].copy_from_slice(message);
 
     // Fill the padding region with random noise (not zeros).
-    OsRng.fill_bytes(&mut buf[4 + message.len()..]);
+    getrandom::fill(&mut buf[4 + message.len()..])
+        .map_err(|e| OnionError::Encryption(format!("padding entropy failed: {e}")))?;
 
     Ok(buf)
 }
@@ -133,10 +132,8 @@ fn pad_to_inner(message: &[u8]) -> Result<[u8; INNER_SIZE], OnionError> {
 ///   [32..44]     – random 12-byte AES-GCM nonce
 ///   [44..]       – AES-256-GCM ciphertext + 16-byte authentication tag
 fn encrypt_layer(payload: &[u8], recipient_pubkey: &X25519PublicKey) -> Result<Vec<u8>, OnionError> {
-    let mut rng = OsRng;
-
     // Ephemeral X25519 key pair for this layer.
-    let ephemeral_secret = EphemeralSecret::random_from_rng(&mut rng);
+    let ephemeral_secret = EphemeralSecret::random_from_rng(rand_core::OsRng);
     let ephemeral_public = X25519PublicKey::from(&ephemeral_secret);
 
     // Zeroize-on-drop shared secret.
@@ -150,7 +147,8 @@ fn encrypt_layer(payload: &[u8], recipient_pubkey: &X25519PublicKey) -> Result<V
 
     // Random 12-byte nonce (independent of key derivation).
     let mut nonce_bytes = [0u8; 12];
-    rng.fill_bytes(&mut nonce_bytes);
+    getrandom::fill(&mut nonce_bytes)
+        .map_err(|e| OnionError::Encryption(format!("nonce entropy failed: {e}")))?;
 
     let aes_key = Key::<Aes256Gcm>::from_slice(aes_key_bytes.as_ref());
     let nonce = Nonce::from_slice(&nonce_bytes);
@@ -179,7 +177,7 @@ mod tests {
     use x25519_dalek::StaticSecret;
 
     fn dummy_keypair() -> (StaticSecret, X25519PublicKey) {
-        let secret = StaticSecret::random_from_rng(OsRng);
+        let secret = StaticSecret::random_from_rng(rand_core::OsRng);
         let public = X25519PublicKey::from(&secret);
         (secret, public)
     }
