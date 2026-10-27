@@ -6,11 +6,12 @@
  */
 
 import { listen }  from '@tauri-apps/api/event';
-import { invoke }  from '@tauri-apps/api/core';
+import { invoke, isTauri } from '@tauri-apps/api/core';
 import { GlobeRenderer, type ProxyChain, type ProxyNode } from './globe';
 import { TerminalPanel, type LogEntry } from './terminal';
 import { ChatPanel } from './chat';
 import { RouterClient, MAX_BODY_CHARS } from './ws';
+import { createId } from './id';
 
 const ROUTER_WS_URL: string =
   (import.meta.env?.VITE_ROUTER_WS_URL as string | undefined) ?? 'ws://127.0.0.1:8080/ws';
@@ -81,7 +82,7 @@ async function main(): Promise<void> {
   const chat     = new ChatPanel();
 
   // Ephemeral identity: lives in memory only, new on every launch.
-  const myUserId = crypto.randomUUID().slice(0, 8);
+  const myUserId = createId().slice(0, 8);
 
   const router = new RouterClient({
     url:    ROUTER_WS_URL,
@@ -109,7 +110,7 @@ async function main(): Promise<void> {
 
   chat.onSend((to, body) => {
     if (body.length > MAX_BODY_CHARS) return false;
-    const id = crypto.randomUUID();
+    const id = createId();
     if (!router.send(id, to, body)) return false;
     chat.addMessage({ id, fromUserId: 'me', text: `→ ${to}: ${body}`, ttlSeconds: MESSAGE_TTL_SECONDS });
     return true;
@@ -126,6 +127,15 @@ async function main(): Promise<void> {
   ]);
 
   terminal.append({ level: 'info', message: 'AnonChat initializing…', timestampMs: Date.now() });
+
+  if (!isTauri()) {
+    terminal.append({
+      level: 'info',
+      message: 'Tauri event streams are unavailable in browser mode.',
+      timestampMs: Date.now(),
+    });
+    return;
+  }
 
   // ── Proxy chain rotation ────────────────────────────────────────────────
   await listen<ProxyChainChangedPayload>('proxy-layer-changed', ({ payload }) => {

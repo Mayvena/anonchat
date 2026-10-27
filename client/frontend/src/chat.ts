@@ -1,3 +1,5 @@
+import { createId } from './id';
+
 export type ChatConnectionState =
   | 'connecting'
   | 'connected'
@@ -127,7 +129,7 @@ export class ChatPanel {
   }
 
   addMessage(input: ChatMessageInput): void {
-    const id = input.id ?? crypto.randomUUID();
+    const id = input.id ?? createId();
     const fromName = this.users.get(input.fromUserId)?.displayName ?? input.fromUserId;
 
     const msgEl = document.createElement('article');
