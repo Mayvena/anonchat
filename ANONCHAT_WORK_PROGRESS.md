@@ -966,3 +966,42 @@
 ### Final Outcome
 - Status: complete
 - Summary: New router sessions now receive unguessable server-issued identities, and reconnect requires the matching credential; arbitrary query IDs cannot claim or replace an existing session.
+
+## Session: 2026-10-27 12:26 EET - Router Offline Delivery Acknowledgement
+
+### Task Summary
+- Keep TTL-backed offline messages available when a WebSocket write fails, and delete them only after a successful write.
+
+### Scope
+- Files:
+  - server/router/main.go
+  - server/router/main_test.go
+  - BUGS.md
+  - ANONCHAT_WORK_PROGRESS.md
+- Subsystems:
+  - router
+
+### Plan
+1. Trace Redis deletion and WebSocket write paths for the first unresolved bug.
+2. Carry offline keys through queued sends and acknowledge them after successful writes.
+3. Add focused regression tests, run router validation, and resolve the bug entry.
+
+### Progress Log
+- 12:26 Confirmed live and replay delivery deleted Redis keys when a message entered the buffered channel, before socket write completion.
+- 12:26 Changed queued messages to retain their Redis key; successful writes now delete the key, while failed writes leave its TTL-backed record available for replay.
+- 12:26 Added router coverage for successful-write deletion and failed-write retention; marked bug 4 Resolved.
+
+### Validation Performed
+- `cd /home/mayvena/anonchat/server/router && go test ./...` -> pass - focused router suite, including failed socket write retention.
+- `cd /home/mayvena/anonchat/server/router && go test ./... && go build ./...` -> pass - router tests and build succeeded.
+- `git -c core.whitespace=cr-at-eol diff --check -- server/router/main.go server/router/main_test.go` -> pass - Go source checked with the repository's CRLF convention.
+
+### Risks / Blockers
+- If Redis cannot store a message, the existing online best-effort delivery path remains available, but a failed socket write cannot be buffered during that Redis outage.
+
+### Next Actions
+1. None.
+
+### Final Outcome
+- Status: complete
+- Summary: Offline message keys are retained until the router successfully writes their payload to the WebSocket; failed writes remain eligible for TTL replay.

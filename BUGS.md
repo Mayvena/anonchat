@@ -49,6 +49,7 @@ This document captures the confirmed issues found during the project review. It 
 
 ## 4. offline message TTL is removed before write completion
 
+- Status: Resolved
 - Severity: Medium
 - Affected area: server/router/main.go
 - Issue:
@@ -58,6 +59,7 @@ This document captures the confirmed issues found during the project review. It 
   - The delivery path only checks whether the payload was accepted onto the channel, not whether `writePump` actually wrote it to the socket: [server/router/main.go](server/router/main.go#L105-L123)
 - Impact:
   This violates the offline replay contract and can silently lose messages that were queued but not successfully transmitted.
+- Solution: Router messages are now stored with the existing TTL before they are queued, and their Redis keys are deleted only after a successful WebSocket write. Regression tests verify successful writes clear the key and failed writes retain it.
 
 ## 5. Pre-key bundle advertises a one-time pre-key that is not retained or recoverable
 
@@ -101,6 +103,7 @@ The following checks were run during review:
 - `cd server/proxy && go test ./... && go build ./...` -> pass
 - `cd server/router && go test ./... && go build ./...` -> pass
 - `cd /home/mayvena/anonchat/server/router && go test ./... && go build ./...` -> pass - includes session identity ownership and reconnect regression coverage
+- `cd /home/mayvena/anonchat/server/router && go test ./... && go build ./...` -> pass - verifies offline message keys survive failed writes and clear after successful writes
 - `cd client/frontend && npm run build` -> pass (with a large chunk-size warning)
 - `cd /home/mayvena/anonchat/client/frontend && npm run build` -> pass - updated server-issued session and authenticated reconnect protocol; existing large chunk-size warning remains
 - `cd client/security-core && cargo check` -> fail

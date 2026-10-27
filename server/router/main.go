@@ -68,10 +68,15 @@ type proxyNode struct {
 type client struct {
 	userID string
 	conn   *websocket.Conn
-	send   chan []byte
+	send   chan outboundMessage
 	done   chan struct{}
 	once   sync.Once
 	hub    *hub
+}
+
+type outboundMessage struct {
+	payload    []byte
+	offlineKey string
 }
 
 // shutdown is idempotent; send is never closed, so concurrent senders cannot panic.
@@ -116,7 +121,7 @@ func (h *hub) getClient(userID string) *client {
 	return c
 }
 
-func (h *hub) deliver(userID string, payload []byte) bool {
+func (h *hub) deliver(userID string, message outboundMessage) bool {
 	c := h.getClient(userID)
 	if c == nil {
 		return false
@@ -129,7 +134,7 @@ func (h *hub) deliver(userID string, payload []byte) bool {
 	}
 
 	select {
-	case c.send <- payload:
+	case c.send <- message:
 		return true
 	default:
 		h.unregister(c)
@@ -145,16 +150,15 @@ func (h *hub) routeMessage(ctx context.Context, m chatMessage) {
 	}
 
 	key := offlineMessageKey(m.To, m.ID)
-	if h.deliver(m.To, encoded) {
-		_, _ = h.redis.Del(ctx, key).Result()
-		return
-	}
-
 	stored, err := json.Marshal(m)
 	if err != nil {
 		return
 	}
-	_ = h.redis.Set(ctx, key, stored, offlineTTL).Err()
+	if err := h.redis.Set(ctx, key, stored, offlineTTL).Err(); err != nil {
+		h.deliver(m.To, outboundMessage{payload: encoded})
+		return
+	}
+	h.deliver(m.To, outboundMessage{payload: encoded, offlineKey: key})
 }
 
 func (h *hub) deliverOffline(ctx context.Context, userID string) {
@@ -180,9 +184,7 @@ func (h *hub) deliverOffline(ctx context.Context, userID string) {
 		if err != nil {
 			continue
 		}
-		if h.deliver(userID, encoded) {
-			_, _ = h.redis.Del(ctx, key).Result()
-		}
+		h.deliver(userID, outboundMessage{payload: encoded, offlineKey: key})
 	}
 }
 
@@ -242,9 +244,8 @@ func (c *client) writePump() {
 			_ = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			_ = c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 			return
-		case payload := <-c.send:
-			_ = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			if err := c.conn.WriteMessage(websocket.TextMessage, payload); err != nil {
+		case message := <-c.send:
+			if err := c.writeMessage(message); err != nil {
 				return
 			}
 		case <-ticker.C:
@@ -254,6 +255,17 @@ func (c *client) writePump() {
 			}
 		}
 	}
+}
+
+func (c *client) writeMessage(message outboundMessage) error {
+	_ = c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+	if err := c.conn.WriteMessage(websocket.TextMessage, message.payload); err != nil {
+		return err
+	}
+	if message.offlineKey != "" {
+		_ = c.hub.redis.Del(context.Background(), message.offlineKey).Err()
+	}
+	return nil
 }
 
 func offlineMessageKey(toUser, msgID string) string {
@@ -618,7 +630,7 @@ func websocketHandler(h *hub) http.HandlerFunc {
 		c := &client{
 			userID: userID,
 			conn:   conn,
-			send:   make(chan []byte, 64),
+			send:   make(chan outboundMessage, 64),
 			done:   make(chan struct{}),
 			hub:    h,
 		}
@@ -630,7 +642,7 @@ func websocketHandler(h *hub) http.HandlerFunc {
 			"credential": credential,
 		}})
 		if err == nil {
-			_ = h.deliver(userID, ack)
+			_ = h.deliver(userID, outboundMessage{payload: ack})
 		}
 
 		go c.writePump()

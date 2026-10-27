@@ -84,7 +84,7 @@ func newTestClient(t *testing.T, h *hub, id string, buf int) *client {
 	return &client{
 		userID: id,
 		conn:   newTestConn(t),
-		send:   make(chan []byte, buf),
+		send:   make(chan outboundMessage, buf),
 		done:   make(chan struct{}),
 		hub:    h,
 	}
@@ -186,13 +186,21 @@ func TestOnlineMessageDeliveredAndNotStored(t *testing.T) {
 
 	h.routeMessage(context.Background(), chatMessage{ID: "m1", From: "a", To: "b", Body: "x"})
 
+	var message outboundMessage
 	select {
-	case <-c.send:
+	case message = <-c.send:
 	default:
 		t.Fatal("expected message on client channel")
 	}
-	if mr.Exists(offlineMessageKey("b", "m1")) {
-		t.Fatal("online delivery must not leave a key in redis")
+	key := offlineMessageKey("b", "m1")
+	if !mr.Exists(key) {
+		t.Fatal("online message must remain buffered until the socket write succeeds")
+	}
+	if err := c.writeMessage(message); err != nil {
+		t.Fatalf("expected socket write to succeed: %v", err)
+	}
+	if mr.Exists(key) {
+		t.Fatal("successfully written message must be removed from redis")
 	}
 }
 
@@ -207,8 +215,32 @@ func TestOfflineReplayDeletesKey(t *testing.T) {
 	if len(c.send) != 1 {
 		t.Fatalf("expected 1 replayed message, got %d", len(c.send))
 	}
-	if mr.Exists(offlineMessageKey("b", "m1")) {
-		t.Fatal("replayed message key must be deleted")
+	key := offlineMessageKey("b", "m1")
+	if !mr.Exists(key) {
+		t.Fatal("replayed message must remain buffered until the socket write succeeds")
+	}
+	if err := c.writeMessage(<-c.send); err != nil {
+		t.Fatalf("expected replay socket write to succeed: %v", err)
+	}
+	if mr.Exists(key) {
+		t.Fatal("successfully written replay must be removed from redis")
+	}
+}
+
+func TestFailedSocketWriteRetainsOfflineMessage(t *testing.T) {
+	h, mr := newTestHub(t)
+	c := newTestClient(t, h, "b", 4)
+	h.register(c)
+	h.routeMessage(context.Background(), chatMessage{ID: "m1", From: "a", To: "b", Body: "x"})
+
+	key := offlineMessageKey("b", "m1")
+	message := <-c.send
+	_ = c.conn.Close()
+	if err := c.writeMessage(message); err == nil {
+		t.Fatal("expected socket write to fail after connection close")
+	}
+	if !mr.Exists(key) {
+		t.Fatal("failed socket write must retain the offline message")
 	}
 }
 
@@ -217,16 +249,16 @@ func TestSlowConsumerDoesNotPanic(t *testing.T) {
 	c := newTestClient(t, h, "b", 1)
 	h.register(c)
 
-	if !h.deliver("b", []byte("1")) {
+	if !h.deliver("b", outboundMessage{payload: []byte("1")}) {
 		t.Fatal("first delivery should succeed")
 	}
-	if h.deliver("b", []byte("2")) {
+	if h.deliver("b", outboundMessage{payload: []byte("2")}) {
 		t.Fatal("second delivery should fail on full buffer")
 	}
 	// Repeated shutdown and delivery after close must be safe.
 	c.shutdown()
 	c.shutdown()
-	if h.deliver("b", []byte("3")) {
+	if h.deliver("b", outboundMessage{payload: []byte("3")}) {
 		t.Fatal("delivery to removed client must fail")
 	}
 	select {
