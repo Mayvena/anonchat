@@ -1,5 +1,40 @@
 # ANONCHAT Work Progress
 
+## Session: 2026-10-28 - Windows Resource Icon
+
+### Task Summary
+- Fix Tauri's Windows build-script failure because `icons/icon.ico` was missing.
+
+### Scope
+- Files:
+  - client/src-tauri/assets/anonchat-icon.svg
+  - client/src-tauri/icons/
+  - client/src-tauri/tauri.conf.json
+  - ANONCHAT_WORK_PROGRESS.md
+- Subsystems:
+  - tauri
+
+### Progress Log
+- Confirmed `tauri.conf.json` had an empty icon list and `client/src-tauri/icons/` did not exist.
+- Added an SVG app icon and used the project-local Tauri CLI to generate the Windows ICO and standard platform icon files.
+- Configured the bundle to include the generated desktop icon variants; a follow-up `cargo check` passed Tauri's Windows icon/config processing and then stopped at Linux GTK dependency discovery.
+
+### Validation Performed
+- `../frontend/node_modules/.bin/tauri icon assets/anonchat-icon.svg --output icons` (from `client/src-tauri`) -> pass - generated `icons/icon.ico` and PNG/ICNS variants.
+- `cargo check` (from `client/src-tauri`) -> blocked at `glib-sys` because this Linux host lacks `pkg-config` and GTK/GIO development libraries; no missing-icon error was reported.
+- `git -c core.whitespace=cr-at-eol diff --check` -> pass.
+
+### Risks / Blockers
+- The Windows-native Cargo check must be rerun on Windows to verify resource compilation and the remaining Windows toolchain/linker path.
+
+### Next Actions
+1. Run `cargo check` from `client\\src-tauri` on the Windows machine.
+2. Resolve any further compiler or linker errors reported there.
+
+### Final Outcome
+- Status: partial
+- Summary: Added the missing Windows ICO and Tauri bundle icon configuration; native Windows validation remains pending.
+
 ## Session: 2026-10-28 - Tauri Feature Config Mismatch
 
 ### Task Summary
