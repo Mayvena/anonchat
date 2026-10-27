@@ -35,6 +35,7 @@ const (
 	proxyDialTimeout      = 3 * time.Second
 	proxyFetchTimeout     = 8 * time.Second
 	sessionAuthPrefix     = "anonchat.v1.auth."
+	roomRecipientID       = "room"
 )
 
 type inboundMessage struct {
@@ -143,9 +144,28 @@ func (h *hub) deliver(userID string, message outboundMessage) bool {
 	}
 }
 
+func (h *hub) broadcast(message outboundMessage, excludeUserID string) {
+	h.mu.RLock()
+	userIDs := make([]string, 0, len(h.clients))
+	for userID := range h.clients {
+		if userID != excludeUserID {
+			userIDs = append(userIDs, userID)
+		}
+	}
+	h.mu.RUnlock()
+
+	for _, userID := range userIDs {
+		h.deliver(userID, message)
+	}
+}
+
 func (h *hub) routeMessage(ctx context.Context, m chatMessage) {
 	encoded, err := json.Marshal(outboundEnvelope{Type: "message", Payload: m})
 	if err != nil {
+		return
+	}
+	if m.To == roomRecipientID {
+		h.broadcast(outboundMessage{payload: encoded}, m.From)
 		return
 	}
 

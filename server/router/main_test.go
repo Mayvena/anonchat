@@ -204,6 +204,46 @@ func TestOnlineMessageDeliveredAndNotStored(t *testing.T) {
 	}
 }
 
+func TestRoomMessageBroadcastsToConnectedPeersWithoutOfflineStorage(t *testing.T) {
+	h, mr := newTestHub(t)
+	sender := newTestClient(t, h, "sender", 4)
+	firstPeer := newTestClient(t, h, "first-peer", 4)
+	secondPeer := newTestClient(t, h, "second-peer", 4)
+	h.register(sender)
+	h.register(firstPeer)
+	h.register(secondPeer)
+
+	h.routeMessage(context.Background(), chatMessage{
+		ID:   "room-message",
+		From: sender.userID,
+		To:   roomRecipientID,
+		Body: "room payload",
+	})
+
+	for _, peer := range []*client{firstPeer, secondPeer} {
+		select {
+		case message := <-peer.send:
+			if message.offlineKey != "" {
+				t.Fatal("room message must not use offline acknowledgement storage")
+			}
+			var envelope struct {
+				Type string `json:"type"`
+			}
+			if err := json.Unmarshal(message.payload, &envelope); err != nil || envelope.Type != "message" {
+				t.Fatalf("expected room message envelope, got %s (err=%v)", message.payload, err)
+			}
+		default:
+			t.Fatalf("expected room message for connected peer %q", peer.userID)
+		}
+	}
+	if len(sender.send) != 0 {
+		t.Fatal("sender must not receive a duplicate room message")
+	}
+	if mr.Exists(offlineMessageKey(roomRecipientID, "room-message")) {
+		t.Fatal("room message must not be stored for offline delivery")
+	}
+}
+
 func TestOfflineReplayDeletesKey(t *testing.T) {
 	h, mr := newTestHub(t)
 	h.routeMessage(context.Background(), chatMessage{ID: "m1", From: "a", To: "b", Body: "x"})

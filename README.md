@@ -136,6 +136,21 @@ Client -> server message:
 }
 ```
 
+The frontend sends messages to the shared live room using the reserved
+destination `room`:
+
+```json
+{
+	"id": "msg-002",
+	"to": "room",
+	"body": "hello everyone"
+}
+```
+
+Room messages are delivered to clients connected when the message is sent.
+They are not buffered for offline users; direct user messages retain the
+existing TTL-backed offline delivery behavior.
+
 Server -> client message:
 
 ```json

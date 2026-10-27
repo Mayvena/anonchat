@@ -1050,3 +1050,48 @@
 ### Final Outcome
 - Status: complete
 - Summary: Offline message keys are retained until the router successfully writes their payload to the WebSocket; failed writes remain eligible for TTL replay.
+
+## Session: 2026-10-27 - Shared room messaging
+
+### Task Summary
+- Let the frontend send messages to a shared live room without requiring a recipient user ID.
+
+### Scope
+- Files:
+  - client/frontend/index.html
+  - client/frontend/src/chat.ts
+  - client/frontend/src/main.ts
+  - server/router/main.go
+  - server/router/main_test.go
+  - README.md
+  - ANONCHAT_WORK_PROGRESS.md
+- Subsystems:
+  - frontend
+  - router
+
+### Plan
+1. Remove the per-user recipient requirement from the frontend and route sends to the shared room.
+2. Fan room messages out to currently connected clients, excluding the sender, without offline storage.
+3. Add router regression coverage, document the contract, and run router/frontend validation.
+
+### Progress Log
+- Confirmed the popup comes from the required recipient input; the current router only supports direct user delivery and has no room route.
+- Agreed that room sends should reach connected clients only; room messages will not be buffered for offline users.
+- Removed recipient ID from the chat form and routed frontend sends to the reserved `room` destination.
+- Added router fan-out to connected clients, excluding the sender, with no Redis storage for room messages; documented the contract and added regression coverage.
+
+### Validation Performed
+- `cd /home/mayvena/anonchat/server/router && go test ./...` -> pass - room fan-out regression and existing router tests pass.
+- `cd /home/mayvena/anonchat/server/router && go build ./...` -> pass - router builds with shared room routing.
+- `cd /home/mayvena/anonchat/client/frontend && npm run build` -> pass - TypeScript and Vite production build succeeded; existing Three.js chunk-size warning remains.
+- `git -c core.whitespace=cr-at-eol diff --check -- ANONCHAT_WORK_PROGRESS.md README.md client/frontend/index.html client/frontend/src/chat.ts server/router/main.go server/router/main_test.go` -> not confirmed - terminal output did not clearly show command completion.
+
+### Risks / Blockers
+- The shared room has no persistent membership or history; only clients connected at send time receive room messages.
+
+### Next Actions
+1. None.
+
+### Final Outcome
+- Status: complete
+- Summary: The frontend no longer requires a recipient user ID and sends to a shared online-only room; direct-message TTL delivery remains unchanged.

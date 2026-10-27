@@ -17,6 +17,8 @@ const STATE_LABEL: Record<ChatConnectionState, string> = {
   failed:       'FAILED',
 };
 
+const ROOM_RECIPIENT_ID = 'room';
+
 export interface ChatUser {
   id: string;
   displayName: string;
@@ -47,7 +49,6 @@ export class ChatPanel {
   private muted = false;
   private readonly statusEl: HTMLElement;
   private readonly formEl: HTMLFormElement;
-  private readonly toInput: HTMLInputElement;
   private readonly bodyInput: HTMLTextAreaElement;
   private readonly sendBtn: HTMLButtonElement;
   private readonly retryBtn: HTMLButtonElement;
@@ -60,7 +61,6 @@ export class ChatPanel {
     this.muteBtn = this.requireEl('sound-toggle') as HTMLButtonElement;
     this.statusEl = this.requireEl('chat-conn-status');
     this.formEl = this.requireEl('chat-form') as HTMLFormElement;
-    this.toInput = this.requireEl('chat-to') as HTMLInputElement;
     this.bodyInput = this.requireEl('chat-body') as HTMLTextAreaElement;
     this.sendBtn = this.requireEl('chat-send') as HTMLButtonElement;
     this.retryBtn = this.requireEl('chat-retry') as HTMLButtonElement;
@@ -107,12 +107,11 @@ export class ChatPanel {
   }
 
   private submit(): void {
-    const to = this.toInput.value.trim();
     const body = this.bodyInput.value.trim();
-    if (!to || !body || !this.sendHandler) return;
+    if (!body || !this.sendHandler) return;
 
     void (async () => {
-      const ok = await this.sendHandler?.(to, body);
+      const ok = await this.sendHandler?.(ROOM_RECIPIENT_ID, body);
       if (ok) {
         this.bodyInput.value = '';
       }
