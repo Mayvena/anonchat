@@ -1,0 +1,101 @@
+# ANONCHAT Bug Log
+
+This document captures the confirmed issues found during the project review. It is intentionally brief and written to be actionable for follow-up fixes.
+
+## 1. Chat traffic is sent in plain JSON instead of through the onion transport
+
+- Severity: High
+- Affected area: client/frontend/src/main.ts, client/frontend/src/ws.ts, client/src-tauri/src/ipc_bridge.rs
+- Issue:
+  The normal chat flow sends message bodies through the router WebSocket client (`RouterClient.send`) and never calls the Tauri onion-packet command (`build_onion_packet_from_registry`). That means user messages are exchanged as plaintext JSON over the router path instead of using the designed encrypted proxy flow.
+- Evidence:
+  - The UI sends directly to the router: [client/frontend/src/main.ts](client/frontend/src/main.ts#L110-L115)
+  - The WebSocket client emits raw JSON `{ id, to, body }`: [client/frontend/src/ws.ts](client/frontend/src/ws.ts#L121-L131)
+  - The Tauri bridge exposes the onion packet command, but it is not used in the chat path: [client/src-tauri/src/ipc_bridge.rs](client/src-tauri/src/ipc_bridge.rs#L220-L247)
+- Impact:
+  This violates the product’s intended anonymous relay design and bypasses the built-in onion transport and proxy chain flow.
+
+## 2. Router accepts arbitrary user IDs and allows connection takeover
+
+- Severity: High
+- Affected area: server/router/main.go
+- Issue:
+  The WebSocket endpoint trusts the `user_id` query parameter and registers the connection under that identity without authentication or ownership validation. A client can impersonate another user by connecting with the same user ID, replacing the legitimate session, and receiving queued messages intended for that account.
+- Evidence:
+  - The server accepts any `user_id` and generates one only when missing: [server/router/main.go](server/router/main.go#L326-L330)
+  - The connection is registered under that value immediately: [server/router/main.go](server/router/main.go#L337-L345)
+- Impact:
+  This is an authentication and identity-confusion issue that can cause message hijacking or denial of service against a valid session.
+
+## 3. Exit proxy allows private-network destinations by default in the compose deployment
+
+- Severity: High
+- Affected area: docker-compose.yml, server/proxy/main.go
+- Issue:
+  The compose stack sets `EXIT_ALLOW_PRIVATE=true`. With the current configuration, the exit node allows private/local addresses, which is unsafe for a deployment that is meant to be a privacy-preserving relay. This is especially risky when the public guard endpoint is reachable from external clients.
+- Evidence:
+  - Compose config sets the flag: [docker-compose.yml](docker-compose.yml#L56-L62)
+  - The proxy enforces private-address filtering only when `EXIT_ALLOW_PRIVATE` is false (default deny): [server/proxy/main.go](server/proxy/main.go#L214-L240)
+- Impact:
+  This expands the reachable destination set beyond intended public internet addresses and can expose internal or local services.
+
+## 4. offline message TTL is removed before write completion
+
+- Severity: Medium
+- Affected area: server/router/main.go
+- Issue:
+  Redis offline keys are deleted as soon as the message is placed into the in-memory channel, even though the socket may fail to flush that message. That creates a gap where the message is lost after being considered delivered.
+- Evidence:
+  - `routeMessage` deletes the Redis key immediately after `h.deliver(...)` succeeds: [server/router/main.go](server/router/main.go#L127-L143)
+  - The delivery path only checks whether the payload was accepted onto the channel, not whether `writePump` actually wrote it to the socket: [server/router/main.go](server/router/main.go#L105-L123)
+- Impact:
+  This violates the offline replay contract and can silently lose messages that were queued but not successfully transmitted.
+
+## 5. Pre-key bundle advertises a one-time pre-key that is not retained or recoverable
+
+- Severity: Medium
+- Affected area: client/security-core/src/device_bootstrap.rs
+- Issue:
+  The generated pre-key bundle includes a fresh one-time pre-key, but that secret material is never persisted alongside the encrypted device envelope. A peer that receives that bundle can be handed a key it cannot actually use for a session.
+- Evidence:
+  - The bundle is constructed using a fresh one-time key: [client/security-core/src/device_bootstrap.rs](client/security-core/src/device_bootstrap.rs#L243-L279)
+  - The corresponding serialized key material is stored only in the immediate local temporary variables, not in the persisted envelope: [client/security-core/src/device_bootstrap.rs](client/security-core/src/device_bootstrap.rs#L200-L228)
+- Impact:
+  The advertised bundle is structurally inconsistent with the device’s actual retrievable key material.
+
+## 6. Security-core does not compile against the current Signal API
+
+- Severity: Medium
+- Affected area: client/security-core/src/device_bootstrap.rs, client/security-core/Cargo.toml
+- Issue:
+  The Rust crate fails to compile with the currently pinned Signal dependency. The module calls APIs that do not exist in the version currently selected by the project, and it also mixes `rand_core` requirements incompatible with the chosen crates.
+- Evidence:
+  - The dependency points at the Signal lib, but the API used here is not available in the current version: [client/security-core/Cargo.toml](client/security-core/Cargo.toml#L12-L20)
+  - Build fails with `IdentityKeyPair::deserialize`, `SignedPreKeyRecord::deserialize`, `KyberPreKeyRecord::deserialize`, and `PreKeyBundle::serialize` errors, plus `OsRng` not satisfying `CryptoRng`: the cargo check output was run and failed for these reasons.
+- Impact:
+  The security-core cannot be built or tested in its current state; the feature is effectively blocked.
+
+## 7. Repository project metadata contains trailing whitespace in the new progress log
+
+- Severity: Low
+- Affected area: ANONCHAT_WORK_PROGRESS.md
+- Issue:
+  The appended work-progress session contains trailing whitespace lines, which is a small repo hygiene issue and is still flagged by `git diff --check`.
+- Evidence:
+  - `git diff --check` reported trailing whitespace in the new session block inside [ANONCHAT_WORK_PROGRESS.md](ANONCHAT_WORK_PROGRESS.md)
+- Impact:
+  This is minor but it does reduce patch cleanliness and may fail strict CI checks that enforce whitespace hygiene.
+
+## Validation Summary
+
+The following checks were run during review:
+
+- `cd server/proxy && go test ./... && go build ./...` -> pass
+- `cd server/router && go test ./... && go build ./...` -> pass
+- `cd client/frontend && npm run build` -> pass (with a large chunk-size warning)
+- `cd client/security-core && cargo check` -> fail
+- `git diff --check` -> reports trailing whitespace in the progress log
+
+## Notes
+
+This list reflects confirmed issues supported by code inspection and validation, not speculative concerns. The most important follow-ups are the chat-transport bypass, router identity trust, and the Rust build blocker.

@@ -1,0 +1,6 @@
+.env
+certs/
+docker-compose.override.yml
+node_modules/
+dist/
+/client/security-core/target/

@@ -491,3 +491,77 @@
 ### Final Outcome
 - Status: partial
 - Summary: The missing Rust producer integration is implemented; compilation and live event delivery remain blocked by unavailable local toolchains.
+
+## Session: 2026-10-26 - Deployment readiness and local validation
+
+### Task Summary
+- Proceed with the local deployment plan, validate available automated checks, and identify blockers without making unapproved privileged changes.
+
+### Scope
+- Files:
+  - docker-compose.yml (inspection only)
+  - .gitignore
+  - ANONCHAT_WORK_PROGRESS.md
+- Subsystems:
+  - infra
+  - frontend
+  - proxy
+  - router
+  - security-core
+
+### Plan
+1. Check local runtime permissions and repository deployment safeguards.
+2. Run frontend install/build validation and determine remaining test blockers.
+3. Start the stack only if Docker access and deployment settings permit it.
+
+### Progress Log
+- 16:00 Confirmed Debian 13 x86_64, Docker/Compose installed, but Docker daemon access denied and non-interactive sudo unavailable.
+- 16:00 Confirmed Go and Rust toolchains are missing; Node/npm are available.
+- 16:05 Added ignore rules for deployment secrets/overrides and generated frontend dependencies/build output.
+- 16:06 Installed frontend dependencies with `npm ci`; `npm run build` passed with a large-chunk warning.
+- 16:07 Production dependency audit found no vulnerabilities; full install reported two advisories (moderate/high).
+- 16:15 Installed Go 1.27.3 and Rust/Cargo 1.99.1 under the user's home directory after verifying official installer checksums.
+- 16:16 Updated `~/.profile` so user-local Go and Cargo binaries are on login-shell PATH; fresh login-shell verification passed.
+- 16:17 Go proxy tests and build passed.
+- 16:19 Installed checksum-verified `protoc` 36.2 under the user's home directory after Rust dependency compilation identified it as required.
+- 16:20 Router tests and build passed after `go mod tidy` added the existing miniredis test dependency and generated `go.sum`.
+- 16:22 Rust dependency build passed its protoc step but security-core compilation failed with 17 existing source/API type errors in `device_bootstrap.rs`.
+- 19:40 Verified Docker group membership; current terminal required `sg docker` because its supplementary groups were stale.
+- 19:41 Compose config validation and image build passed; all five services started successfully.
+- 19:42 Verified Redis persistence disabled, router WebSocket returned HTTP 101, and guard completed a TLS 1.3 handshake with the development self-signed certificate.
+- 19:43 Recent service logs were empty; all services report running and Redis healthy.
+
+### Validation Performed
+- `docker compose config --quiet` -> pass - Compose syntax validated without starting services.
+- `docker info` -> blocked - current account cannot access `/var/run/docker.sock`.
+- `cd client/frontend && npm ci && npm run build` -> pass - TypeScript and Vite production build succeeded; bundle-size warning remains.
+- `cd client/frontend && npm audit --omit=dev` -> pass - no production dependency vulnerabilities found.
+- `docker compose ps` -> blocked - current account cannot access Docker daemon.
+- `cd server/proxy && go test ./... && go build ./...` -> pass - proxy tests and build succeeded.
+- `cd server/router && go mod tidy` -> pass - resolved missing checksums and included existing miniredis test import.
+- `cd server/router && go test ./... && go build ./...` -> pass.
+- `cd client/security-core && cargo test && cargo check` -> fail - after installing protoc, compilation reports 17 type/API errors in `src/device_bootstrap.rs`; tests did not run.
+- `bash -lc 'go version && rustc --version && cargo --version && protoc --version'` -> pass - all user-local toolchains are visible in a fresh login shell.
+- `sg docker -c 'cd /home/mayvena/anonchat && docker compose config --quiet'` -> pass.
+- `sg docker -c 'cd /home/mayvena/anonchat && docker compose build --pull'` -> pass - four application images built.
+- `sg docker -c 'cd /home/mayvena/anonchat && docker compose up -d'` -> pass - all five services started; Redis healthy.
+- `sg docker -c 'cd /home/mayvena/anonchat && docker compose ps'` -> pass - all five services up.
+- Redis `CONFIG GET save` / `CONFIG GET appendonly` -> pass - save rules empty, appendonly `no`.
+- Router WebSocket upgrade smoke test -> pass - HTTP 101.
+- `timeout 8 openssl s_client -connect localhost:9001 -brief` -> pass - TLS 1.3 handshake; certificate is self-signed as expected for local development.
+- Recent container logs -> pass - no output/errors observed.
+
+### Risks / Blockers
+- Compose has the five-service development stack running. The current terminal still needs a new login or `newgrp docker` to inherit Docker group membership; `sg docker -c ...` works immediately.
+- Compose enables insecure TLS verification skipping and private-address exit access and publishes router port 8080; do not expose this development configuration as production.
+- Guard TLS uses an ephemeral self-signed certificate; public deployment requires reviewed trusted certificates and production hardening.
+- Security-core Rust build remains blocked by source/API type errors in `device_bootstrap.rs`; deployment container build does not compile that client subsystem.
+
+### Next Actions
+1. Start a fresh login session so Docker group membership applies without `sg`.
+2. Resolve security-core Signal API and `rand_core` type errors before Rust tests can pass.
+3. Review production TLS, private egress, router exposure, origin allowlist, firewall, and autostart before any public deployment.
+
+### Final Outcome
+- Status: partial
+- Summary: Development Compose stack is built, running, and smoke-verified. Go proxy/router and frontend validations pass; security-core Rust source errors remain. Production hardening is not performed.
