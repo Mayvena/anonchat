@@ -1,5 +1,40 @@
 # ANONCHAT Work Progress
 
+## Session: 2026-10-28 - Tauri Cargo Context Generation
+
+### Task Summary
+- Fix `cargo check` failing because `tauri::generate_context!()` had no `OUT_DIR`.
+
+### Scope
+- Files:
+  - client/src-tauri/Cargo.toml
+  - client/src-tauri/build.rs
+  - client/src-tauri/src/ipc_bridge.rs
+  - ANONCHAT_WORK_PROGRESS.md
+- Subsystems:
+  - tauri
+
+### Progress Log
+- Confirmed the Tauri crate had no build script or `tauri-build` dependency, so Cargo did not generate the build-time context required by `generate_context!()`.
+- Added `tauri-build` and `build.rs`, including a `check-cfg` declaration for the app's `mobile` cfg; removed the reported unused `Manager` import.
+- `cargo check` now passes the original `OUT_DIR` macro failure and proceeds to Linux GTK/GIO native dependency detection, where this host lacks `pkg-config`.
+
+### Validation Performed
+- `cd client/src-tauri && cargo check` -> blocked after the fix by missing `pkg-config` and Linux GTK/GIO development libraries; the original `OUT_DIR` error did not recur.
+- Editor diagnostics for `build.rs` and `src/lib.rs` -> pass - no errors reported.
+- `git -c core.whitespace=cr-at-eol diff --check` -> pass.
+
+### Risks / Blockers
+- Full app validation still needs a host with Tauri's native platform dependencies; for the reported Windows case, rerun from `client\src-tauri` on the Windows machine.
+
+### Next Actions
+1. On Windows, run `cargo check` in `client\src-tauri` and confirm `generate_context!()` compiles.
+2. Address any further Windows-specific compiler or linker errors revealed after the context is generated.
+
+### Final Outcome
+- Status: partial
+- Summary: Added the standard Tauri build hook; validation passed the reported failure and is now blocked only by this Linux host's missing GTK build prerequisites.
+
 ## Session: 2026-10-27 16:15 EET - Windows Desktop Endpoint Setup
 
 ### Task Summary

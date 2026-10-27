@@ -19,6 +19,9 @@ tokio            = { version = "1.40.0", features = ["full"] }
 thiserror        = "1.0.63"
 security-core    = { path = "../security-core" }
 
+[build-dependencies]
+tauri-build = { version = "2.5.1", features = [] }
+
 [profile.release]
 strip    = true
 opt-level = "z"
