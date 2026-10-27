@@ -50,6 +50,7 @@ export class ChatPanel {
   private readonly statusEl: HTMLElement;
   private readonly formEl: HTMLFormElement;
   private readonly bodyInput: HTMLTextAreaElement;
+  private readonly recipientInput: HTMLInputElement;
   private readonly sendBtn: HTMLButtonElement;
   private readonly retryBtn: HTMLButtonElement;
   private sendHandler: SendHandler | null = null;
@@ -62,6 +63,7 @@ export class ChatPanel {
     this.statusEl = this.requireEl('chat-conn-status');
     this.formEl = this.requireEl('chat-form') as HTMLFormElement;
     this.bodyInput = this.requireEl('chat-body') as HTMLTextAreaElement;
+    this.recipientInput = this.requireEl('chat-recipient') as HTMLInputElement;
     this.sendBtn = this.requireEl('chat-send') as HTMLButtonElement;
     this.retryBtn = this.requireEl('chat-retry') as HTMLButtonElement;
 
@@ -109,9 +111,10 @@ export class ChatPanel {
   private submit(): void {
     const body = this.bodyInput.value.trim();
     if (!body || !this.sendHandler) return;
+    const recipient = this.recipientInput.value.trim() || ROOM_RECIPIENT_ID;
 
     void (async () => {
-      const ok = await this.sendHandler?.(ROOM_RECIPIENT_ID, body);
+      const ok = await this.sendHandler?.(recipient, body);
       if (ok) {
         this.bodyInput.value = '';
       }

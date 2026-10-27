@@ -1,5 +1,44 @@
 # ANONCHAT Work Progress
 
+## Session: 2026-10-27 13:39 EET - Optional Chat Recipient
+
+### Task Summary
+- Restore an optional recipient user ID field so chat sends privately when selected and to the room when blank.
+
+### Scope
+- Files:
+  - client/frontend/index.html
+  - client/frontend/src/chat.ts
+  - BUGS.md
+  - ANONCHAT_WORK_PROGRESS.md
+- Subsystems:
+  - frontend
+
+### Plan
+1. Confirm room and private-recipient routing contracts.
+2. Add the optional recipient field and map blank input to the room destination.
+3. Build the frontend and record the final bug status.
+
+### Progress Log
+- 13:39 Confirmed the router broadcasts the reserved `room` destination and privately routes other recipient IDs.
+- 13:39 Added bug 8 for the missing recipient control and implemented the optional composer field with room fallback.
+- 13:40 Frontend production build passed; reviewed generated output and patch formatting.
+
+### Validation Performed
+- `npm run build` (from repository root) -> fail - no root `package.json`; this did not validate the change.
+- `cd client/frontend && npm run build` -> pass - TypeScript check and Vite production build; Vite reports the existing large Three.js chunk warning.
+- Router room broadcast regression test -> not run - the router routing implementation is unchanged; frontend build is the focused validation for this UI change.
+
+### Risks / Blockers
+- None identified.
+
+### Next Actions
+- None.
+
+### Final Outcome
+- Status: complete
+- Summary: Restored optional private recipient selection with room delivery as the blank-input fallback; frontend build passed.
+
 ## Session: 2026-07-23 00:00 UTC - Instruction Files Optimization
 
 ### Task Summary

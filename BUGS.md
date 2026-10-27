@@ -112,8 +112,21 @@ The following checks were run during review:
 - `cd /home/mayvena/anonchat/server/router && go test ./... && go build ./...` -> pass - verifies offline message keys survive failed writes and clear after successful writes
 - `cd client/frontend && npm run build` -> pass (with a large chunk-size warning)
 - `cd /home/mayvena/anonchat/client/frontend && npm run build` -> pass - updated server-issued session and authenticated reconnect protocol; existing large chunk-size warning remains
+- `cd client/frontend && npm run build` -> pass - validates optional recipient input and frontend TypeScript; existing large chunk-size warning remains
 - `cd client/security-core && cargo test -- --nocapture` -> pass
 - `git diff --check` -> pass - current workspace diff is clean
+
+## 8. Chat composer no longer exposes recipient selection
+
+- Status: Resolved
+- Severity: Medium
+- Affected area: client/frontend/src/chat.ts, client/frontend/index.html
+- Issue:
+  The chat composer has no recipient user ID field, and `ChatPanel.submit()` always sends to the room. Users cannot select a private-message recipient from the composer.
+- Evidence:
+  - The composer markup contains only the message textarea and send button: [client/frontend/index.html](client/frontend/index.html#L395-L400)
+  - The chat panel hard-codes `ROOM_RECIPIENT_ID` for every send: [client/frontend/src/chat.ts](client/frontend/src/chat.ts#L110-L115)
+- Solution: Restored a labeled optional recipient user ID field; trimmed blank input maps to the reserved `room` destination, while a selected ID is passed to the existing private-message route. The frontend TypeScript check and production build pass.
 
 ## Notes
 
