@@ -34,6 +34,7 @@ This document captures the confirmed issues found during the project review. It 
 
 ## 3. Exit proxy allows private-network destinations by default in the compose deployment
 
+- Status: Resolved
 - Severity: High
 - Affected area: docker-compose.yml, server/proxy/main.go
 - Issue:
@@ -43,6 +44,8 @@ This document captures the confirmed issues found during the project review. It 
   - The proxy enforces private-address filtering only when `EXIT_ALLOW_PRIVATE` is false (default deny): [server/proxy/main.go](server/proxy/main.go#L214-L240)
 - Impact:
   This expands the reachable destination set beyond intended public internet addresses and can expose internal or local services.
+- Solution:
+  The exit proxy now defaults to `EXIT_ALLOW_PRIVATE=false` in the local compose deployment, matching the proxy runtime’s default-deny behavior and requiring an explicit opt-in for private destinations.
 
 ## 4. offline message TTL is removed before write completion
 

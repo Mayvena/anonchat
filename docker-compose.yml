@@ -58,7 +58,7 @@ services:
     environment:
       - NODE_ROLE=exit
       - LISTEN_PORT=9003
-      - EXIT_ALLOW_PRIVATE=true
+      - EXIT_ALLOW_PRIVATE=false
     networks:
       - anon_net
 

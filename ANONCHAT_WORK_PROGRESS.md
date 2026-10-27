@@ -285,7 +285,45 @@
 ### Final Outcome
 - Status: partial
 - Summary: Changes made; validation pending (no Go toolchain).
+## Session: 2026-10-27 00:00 UTC - Fix first unresolved bug: private-exit default deny
 
+### Task Summary
+- Remove the unsafe exit-proxy deployment default that allowed private/local destinations and align the compose stack with the proxy runtime's default-deny private-IP checks.
+
+### Scope
+- Files:
+	- docker-compose.yml
+	- BUGS.md
+	- ANONCHAT_WORK_PROGRESS.md
+- Subsystems:
+	- infra
+	- proxy
+
+### Plan
+1. Confirm the first unresolved bug and the owning config path.
+2. Change the exit proxy deployment default to deny private-network destinations by default.
+3. Validate the compose file and proxy test suite.
+4. Update the bug log and progress tracker with the remediation evidence.
+
+### Progress Log
+- 00:00 Confirmed the first unresolved bug is the exit node's `EXIT_ALLOW_PRIVATE=true` compose setting, which overrides the proxy code's safe default deny behavior.
+- 00:01 Updated the local deployment config to `EXIT_ALLOW_PRIVATE=false` so the exit node only allows public destinations unless the deployment explicitly opts in.
+- 00:03 Ran the narrow validation commands for the proxy package and for Docker-compose parsing.
+
+### Validation Performed
+- cd /home/mayvena/anonchat/server/proxy && go test ./... -> pass - proxy package tests pass with the default-deny semantics unchanged.
+- docker compose config -q -> pass - compose file parses cleanly with the exit proxy explicitly set to `EXIT_ALLOW_PRIVATE=false`.
+
+### Risks / Blockers
+- None. This fix is limited to the deployment default and preserves the proxy runtime contract.
+
+### Next Actions
+1. Review the next unresolved bug in BUGS.md in priority order.
+2. Keep the deployment default explicit in future compose or environment overrides.
+
+### Final Outcome
+- Status: complete
+- Summary: The first unresolved bug is fixed by enforcing default-deny private destination filtering in the exit proxy deployment configuration, and the bug record reflects the resolved state.
 ## Session: 2026-10-26 13:40 EET - Router review fixes
 
 ### Task Summary
