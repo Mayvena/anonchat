@@ -1,5 +1,38 @@
 # ANONCHAT Work Progress
 
+## Session: 2026-10-28 - Tauri Feature Config Mismatch
+
+### Task Summary
+- Resolve the Tauri build-script failure reporting `protocol-asset` was not enabled in `tauri.conf.json`.
+
+### Scope
+- Files:
+  - client/src-tauri/Cargo.toml
+  - ANONCHAT_WORK_PROGRESS.md
+- Subsystems:
+  - tauri
+
+### Progress Log
+- Confirmed `protocol-asset` was enabled only in Cargo, while `app.security.assetProtocol.enable` remained false and the frontend did not use `convertFileSrc` or the asset protocol.
+- Removed the unused `protocol-asset` feature rather than widening asset-protocol access.
+- Reran `cargo check`; the feature/config mismatch did not recur, and compilation proceeded to GTK system-library detection on Linux.
+
+### Validation Performed
+- `cargo check` (from `client/src-tauri`) -> blocked by missing `pkg-config` and GTK/GIO development libraries on this Linux host; no Tauri feature/config mismatch reported.
+- `git -c core.whitespace=cr-at-eol diff --check` -> pass.
+
+### Risks / Blockers
+- The Windows-native check must still be rerun to validate the full Windows target; Linux cannot validate the MSVC/WebView2 build.
+- `security-core/src/device_bootstrap.rs` has a non-fatal `unused_mut` warning unrelated to this failure.
+
+### Next Actions
+1. Rerun `cargo check` from `client\src-tauri` on Windows.
+2. Address any subsequent Windows compiler or linker errors.
+
+### Final Outcome
+- Status: partial
+- Summary: Removed the root cause of the reported Tauri feature/config mismatch; local compilation is blocked later by missing Linux GTK prerequisites.
+
 ## Session: 2026-10-28 - Tauri Cargo Context Generation
 
 ### Task Summary
