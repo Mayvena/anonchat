@@ -1,6 +1,6 @@
 # ANONCHAT — Verbose Deployment Guide
 
-> **Target OS:** Ubuntu 22.04 LTS (Jammy) or 24.04 LTS (Noble) — 64-bit
+> **Target OS:** Ubuntu 22.04 LTS (Jammy), Ubuntu 24.04 LTS (Noble), or Debian 13 (Trixie) — 64-bit
 > **Architecture:** The server stack runs entirely in Docker containers. The Tauri desktop client is built and distributed separately.
 > **Security reminder:** ANONCHAT is a zero-knowledge, no-log application. Every step below that touches secrets must be run in a RAM-backed temp directory where possible.
 
@@ -25,139 +25,21 @@
 
 ## 1. Server Prerequisites
 
-Run the script below as `root` (or via `sudo bash`) on a **fresh** Ubuntu 22.04 / 24.04 server.
-The script is idempotent — safe to re-run if a step was interrupted.
+For a guided run of the server setup steps, use the project-root master script
+after cloning the repository and reviewing the firewall warning in section 6:
 
 ```bash
-#!/usr/bin/env bash
-# scripts/install-server-prereqs.sh
-# Installs: Docker Engine, Docker Compose v2, git, openssl, curl, ufw
-# Tested on: Ubuntu 22.04 LTS, Ubuntu 24.04 LTS
-
-set -euo pipefail
-
-#──────────────────────────────────────────────────────────────
-# 0. Colour helpers
-#──────────────────────────────────────────────────────────────
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
-info()    { echo -e "${GREEN}[INFO]${NC}  $*"; }
-warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; }
-abort()   { echo -e "${RED}[ERR]${NC}   $*" >&2; exit 1; }
-
-#──────────────────────────────────────────────────────────────
-# 1. Verify we are on a supported platform
-#──────────────────────────────────────────────────────────────
-ARCH=$(uname -m)
-[[ "$ARCH" == "x86_64" ]] || abort "Only x86_64 is supported. Got: $ARCH"
-
-DISTRO_ID=$(. /etc/os-release && echo "$ID")
-DISTRO_VERSION=$(. /etc/os-release && echo "$VERSION_ID")
-info "Detected OS: $DISTRO_ID $DISTRO_VERSION"
-
-[[ "$DISTRO_ID" == "ubuntu" ]] || abort "This script targets Ubuntu only."
-
-#──────────────────────────────────────────────────────────────
-# 2. Base system update
-#──────────────────────────────────────────────────────────────
-info "Updating package lists and upgrading existing packages..."
-apt-get update -y
-DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends
-
-#──────────────────────────────────────────────────────────────
-# 3. Essential utilities
-#──────────────────────────────────────────────────────────────
-info "Installing essential utilities..."
-DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    ca-certificates \
-    curl \
-    gnupg \
-    lsb-release \
-    git \
-    openssl \
-    ufw \
-    htop \
-    jq
-
-#──────────────────────────────────────────────────────────────
-# 4. Docker Engine (official repo)
-#    Removes any Ubuntu-bundled docker.io / docker-compose
-#    before installing the upstream packages.
-#──────────────────────────────────────────────────────────────
-info "Removing legacy Docker packages if present..."
-for pkg in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do
-    apt-get remove -y "$pkg" 2>/dev/null || true
-done
-
-info "Adding Docker's official GPG key and APT repository..."
-install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
-    | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-chmod a+r /etc/apt/keyrings/docker.gpg
-
-echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-   https://download.docker.com/linux/ubuntu \
-   $(lsb_release -cs) stable" \
-  > /etc/apt/sources.list.d/docker.list
-
-apt-get update -y
-
-info "Installing Docker Engine and Docker Compose plugin..."
-DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    docker-ce \
-    docker-ce-cli \
-    containerd.io \
-    docker-buildx-plugin \
-    docker-compose-plugin
-
-#──────────────────────────────────────────────────────────────
-# 5. Enable and start Docker
-#──────────────────────────────────────────────────────────────
-info "Enabling and starting Docker daemon..."
-systemctl enable --now docker
-
-#──────────────────────────────────────────────────────────────
-# 6. Add the deploy user to the docker group (optional but convenient)
-#    Replace 'ubuntu' with your actual non-root deploy user if different.
-#──────────────────────────────────────────────────────────────
-DEPLOY_USER="${SUDO_USER:-ubuntu}"
-if id "$DEPLOY_USER" &>/dev/null; then
-    info "Adding $DEPLOY_USER to the docker group..."
-    usermod -aG docker "$DEPLOY_USER"
-    warn "You must log out and back in (or run 'newgrp docker') for the group change to take effect."
-else
-    warn "User '$DEPLOY_USER' not found — skipping docker group assignment."
-fi
-
-#──────────────────────────────────────────────────────────────
-# 7. Verify Docker installation
-#──────────────────────────────────────────────────────────────
-DOCKER_VERSION=$(docker --version)
-COMPOSE_VERSION=$(docker compose version)
-info "Docker installed:         $DOCKER_VERSION"
-info "Docker Compose installed: $COMPOSE_VERSION"
-
-#──────────────────────────────────────────────────────────────
-# 8. Kernel tuning — increase connection backlog for proxy nodes
-#──────────────────────────────────────────────────────────────
-info "Applying kernel network tuning..."
-cat > /etc/sysctl.d/99-anonchat.conf <<'EOF'
-# Allow larger connection queues for the proxy nodes
-net.core.somaxconn = 65535
-net.ipv4.tcp_max_syn_backlog = 65535
-# Increase local port range to avoid exhaustion under load
-net.ipv4.ip_local_port_range = 1024 65535
-# Keep TIME_WAIT sockets shorter in testing; adjust for production
-net.ipv4.tcp_fin_timeout = 15
-EOF
-sysctl --system
-
-info "All prerequisites installed successfully."
-echo ""
-echo "Next step: clone the repo and run scripts/generate-tls-certs.sh"
+./deploy.sh
 ```
 
-Save the script and run it:
+It runs server prerequisites, TLS certificate generation, and firewall setup in
+that order. It prompts before changing the host; set `SSH_PORT` for nonstandard
+SSH ports. Continue with the build and startup steps below after it completes.
+
+The standalone script supports Ubuntu 22.04/24.04 and Debian 13. It updates
+system packages, installs Docker Engine and Compose, and applies kernel tuning.
+Run it as `root` (or via `sudo bash`) on a fresh server; it is safe to rerun
+after an interrupted setup.
 
 ```bash
 sudo bash scripts/install-server-prereqs.sh
@@ -173,7 +55,7 @@ sudo bash scripts/install-server-prereqs.sh
 sudo mkdir -p /opt/anonchat
 sudo chown "$USER":"$USER" /opt/anonchat
 
-git clone https://github.com/your-org/anonchat.git /opt/anonchat
+git clone https://github.com/Mayvena/anonchat.git /opt/anonchat
 cd /opt/anonchat
 ```
 
@@ -181,68 +63,25 @@ cd /opt/anonchat
 
 ## 3. TLS Certificate Generation
 
-Each proxy node (Guard, Middle, Exit) and the Chat Router require TLS certificates.
+Each proxy node (Guard, Middle, Exit) uses TLS certificates. The Chat Router currently serves plain HTTP/WebSocket and does not load a certificate.
 In production use certificates issued by a trusted CA (e.g. Let's Encrypt via `certbot`).
-The script below generates **self-signed** certificates suitable for an internal network
-or for initial smoke-testing; swap them for real certs before exposing the service publicly.
+Run the generator as the project owner, not with `sudo`; it makes private keys
+group-readable only to that user's primary group and grants the proxy containers
+that supplementary group.
 
-```bash
-#!/usr/bin/env bash
-# scripts/generate-tls-certs.sh
-# Generates self-signed TLS keypairs for each server component.
-# Output: certs/  directory at the project root.
-
-set -euo pipefail
-
-RED='\033[0;31m'; GREEN='\033[0;32m'; NC='\033[0m'
-info() { echo -e "${GREEN}[INFO]${NC}  $*"; }
-
-CERT_DIR="$(pwd)/certs"
-mkdir -p "$CERT_DIR"
-
-# Key size — 4096 for production, 2048 acceptable for internal dev
-KEY_BITS=4096
-
-# Days until expiry
-DAYS=365
-
-generate_cert() {
-    local name="$1"
-    local cn="$2"
-    local out_dir="$CERT_DIR/$name"
-    mkdir -p "$out_dir"
-
-    info "Generating keypair for: $cn"
-
-    openssl req -x509 -newkey rsa:${KEY_BITS} \
-        -keyout "$out_dir/key.pem" \
-        -out    "$out_dir/cert.pem" \
-        -days   "${DAYS}" \
-        -nodes \
-        -subj   "/CN=${cn}/O=AnonChat/C=XX" \
-        -addext "subjectAltName=DNS:${cn},DNS:localhost,IP:127.0.0.1"
-
-    chmod 600 "$out_dir/key.pem"
-    chmod 644 "$out_dir/cert.pem"
-
-    info "  cert: $out_dir/cert.pem"
-    info "  key:  $out_dir/key.pem"
-}
-
-generate_cert "proxy-guard"  "proxy-guard"
-generate_cert "proxy-middle" "proxy-middle"
-generate_cert "proxy-exit"   "proxy-exit"
-generate_cert "router"       "chat-router"
-
-info "All certificates generated in: $CERT_DIR"
-echo ""
-echo "Mount them into containers via volumes in docker-compose.override.yml"
-echo "and point TLS_CERT_FILE / TLS_KEY_FILE env vars at the mounted paths."
-```
+The script generates **self-signed** certificates suitable for an internal network
+or initial smoke-testing, and writes `docker-compose.override.yml` with read-only
+mounts and TLS paths for all three proxies. Replace the certificates with trusted
+CA-issued files before exposing the service publicly.
 
 ```bash
 bash scripts/generate-tls-certs.sh
 ```
+
+The generated override is automatically merged by `docker compose`. The script
+will refuse to replace an existing override unless it exactly matches its own
+generated file; move a custom override aside and merge these TLS settings yourself
+if you need additional Compose customization.
 
 ---
 
@@ -264,55 +103,12 @@ ROUTER_PORT=8080
 # MIDDLE_NEXT_HOP=proxy-exit:9003
 # EXIT_NEXT_HOP=chat-router:8080
 
-# ─── TLS (leave blank to use auto-generated ephemeral certs in dev mode) ──────
-GUARD_TLS_CERT=/run/secrets/guard_cert
-GUARD_TLS_KEY=/run/secrets/guard_key
-MIDDLE_TLS_CERT=/run/secrets/middle_cert
-MIDDLE_TLS_KEY=/run/secrets/middle_key
-EXIT_TLS_CERT=/run/secrets/exit_cert
-EXIT_TLS_KEY=/run/secrets/exit_key
-
 # ─── Dial / idle timeouts (seconds) ───────────────────────────────────────────
 PROXY_DIAL_TIMEOUT=10
 PROXY_IDLE_TIMEOUT=120
 EOF
 
 chmod 600 /opt/anonchat/.env
-```
-
-Create an override file to mount the generated certs and wire the env vars:
-
-```bash
-cat > /opt/anonchat/docker-compose.override.yml <<'EOF'
-version: '3.8'
-
-services:
-
-  proxy-guard:
-    environment:
-      - TLS_CERT_FILE=/certs/cert.pem
-      - TLS_KEY_FILE=/certs/key.pem
-    volumes:
-      - ./certs/proxy-guard:/certs:ro
-
-  proxy-middle:
-    environment:
-      - TLS_CERT_FILE=/certs/cert.pem
-      - TLS_KEY_FILE=/certs/key.pem
-    volumes:
-      - ./certs/proxy-middle:/certs:ro
-
-  proxy-exit:
-    environment:
-      - TLS_CERT_FILE=/certs/cert.pem
-      - TLS_KEY_FILE=/certs/key.pem
-    volumes:
-      - ./certs/proxy-exit:/certs:ro
-
-  chat-router:
-    volumes:
-      - ./certs/router:/certs:ro
-EOF
 ```
 
 ---
@@ -364,47 +160,13 @@ docker compose logs -f
 ## 6. Firewall Rules
 
 ```bash
-#!/usr/bin/env bash
-# scripts/configure-firewall.sh
-# Configures UFW to expose only the ports required by ANONCHAT.
-# Run as root on the server.
-
-set -euo pipefail
-
-info() { echo "[INFO]  $*"; }
-
-info "Resetting UFW to defaults..."
-ufw --force reset
-
-info "Setting default policies..."
-ufw default deny incoming
-ufw default allow outgoing
-
-info "Allowing SSH (port 22)..."
-ufw allow 22/tcp comment "SSH admin access"
-
-info "Allowing Guard Proxy (port 9001 — clients connect here)..."
-ufw allow 9001/tcp comment "AnonChat Guard Proxy"
-
-info "Allowing Chat Router WebSocket (port 8080 — only reachable from exit proxy)..."
-# In a multi-server deployment, restrict this to the exit node's IP:
-# ufw allow from <EXIT_NODE_IP> to any port 8080 proto tcp
-# For single-host deployments, Docker handles inter-container networking
-# internally; 8080 need not be publicly exposed.  Comment out the next
-# line to keep the router private.
-ufw allow 8080/tcp comment "AnonChat Chat Router (restrict in multi-server setup)"
-
-info "Ports 9002 and 9003 (middle / exit) are internal Docker network only."
-info "They are NOT opened externally."
-
-info "Enabling UFW..."
-ufw --force enable
-ufw status verbose
-```
-
-```bash
 sudo bash scripts/configure-firewall.sh
 ```
+
+This resets existing UFW rules before applying its defaults and ANONCHAT ports.
+Confirm your SSH port first; for a nonstandard port, run with `SSH_PORT=<port>`.
+For single-host deployments, remove or restrict the router's port 8080 rule if
+it should not be exposed publicly.
 
 > **Multi-server deployment note:** If Guard, Middle, Exit, and Router run on
 > separate machines, also open 9002 on the Middle host and 9003 on the Exit
@@ -431,7 +193,7 @@ RemainAfterExit=yes
 WorkingDirectory=/opt/anonchat
 ExecStart=/usr/bin/docker compose up -d --remove-orphans
 ExecStop=/usr/bin/docker compose down
-ExecReload=/usr/bin/docker compose pull && /usr/bin/docker compose up -d --remove-orphans
+ExecReload=/bin/sh -c '/usr/bin/docker compose pull && /usr/bin/docker compose up -d --remove-orphans'
 TimeoutStartSec=120
 TimeoutStopSec=30
 Restart=on-failure
@@ -462,9 +224,9 @@ cd /opt/anonchat && docker compose pull && docker compose up -d --remove-orphans
 # All five containers should show "Up"
 docker compose ps
 
-# Inspect Redis — confirm persistence is OFF
+# Inspect Redis - confirm persistence is OFF
 docker exec anonchat-redis redis-cli CONFIG GET save
-# Expected: (empty array — no save rules)
+# Expected: (empty array - no save rules)
 docker exec anonchat-redis redis-cli CONFIG GET appendonly
 # Expected: "no"
 
@@ -489,85 +251,7 @@ docker stats --no-stream
 
 ## 9. Building the Desktop Client (Linux)
 
-Run this on a **developer workstation** (not the server), or in a CI pipeline.
-
-```bash
-#!/usr/bin/env bash
-# scripts/install-client-prereqs-linux.sh
-# Installs prerequisites for building the Tauri desktop client on Ubuntu.
-
-set -euo pipefail
-
-info() { echo "[INFO]  $*"; }
-
-#──────────────────────────────────────────────────────────────
-# 1. System packages required by Tauri on Linux
-#──────────────────────────────────────────────────────────────
-info "Installing system dependencies for Tauri..."
-sudo apt-get update -y
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    build-essential \
-    libssl-dev \
-    libgtk-3-dev \
-    libayatana-appindicator3-dev \
-    librsvg2-dev \
-    libwebkit2gtk-4.1-dev \
-    libxdo-dev \
-    pkg-config \
-    curl \
-    git
-
-#──────────────────────────────────────────────────────────────
-# 2. Rust toolchain (rustup)
-#    Minimum required version: 1.75
-#──────────────────────────────────────────────────────────────
-if ! command -v rustup &>/dev/null; then
-    info "Installing Rust via rustup (stable channel)..."
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --default-toolchain stable --no-modify-path
-    source "$HOME/.cargo/env"
-else
-    info "rustup already present — updating toolchain..."
-    rustup update stable
-fi
-
-RUST_VERSION=$(rustc --version)
-info "Rust: $RUST_VERSION"
-
-# Confirm Rust >= 1.75
-RUST_SEMVER=$(rustc --version | grep -oP '\d+\.\d+\.\d+')
-RUST_MAJOR=$(echo "$RUST_SEMVER" | cut -d. -f1)
-RUST_MINOR=$(echo "$RUST_SEMVER" | cut -d. -f2)
-if [[ "$RUST_MAJOR" -lt 1 || ( "$RUST_MAJOR" -eq 1 && "$RUST_MINOR" -lt 75 ) ]]; then
-    echo "[ERR]  Rust >= 1.75 required. Got: $RUST_SEMVER" >&2
-    exit 1
-fi
-
-#──────────────────────────────────────────────────────────────
-# 3. Node.js v20+ (via NodeSource)
-#──────────────────────────────────────────────────────────────
-if ! command -v node &>/dev/null || [[ "$(node --version | tr -d 'v' | cut -d. -f1)" -lt 20 ]]; then
-    info "Installing Node.js v20 via NodeSource..."
-    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
-else
-    info "Node.js $(node --version) already installed."
-fi
-
-info "Node: $(node --version)   npm: $(npm --version)"
-
-#──────────────────────────────────────────────────────────────
-# 4. Tauri CLI (installed as a Cargo binary)
-#──────────────────────────────────────────────────────────────
-info "Installing Tauri CLI..."
-cargo install tauri-cli --version "^2.0" --locked
-
-info "Tauri CLI: $(cargo tauri --version)"
-
-info "All client build prerequisites installed."
-echo ""
-echo "Next step: run scripts/build-client-linux.sh"
-```
+Run these scripts on a **developer workstation** (not the server), or in a CI pipeline.
 
 ```bash
 bash scripts/install-client-prereqs-linux.sh
@@ -575,48 +259,6 @@ source "$HOME/.cargo/env"   # ensure Cargo binaries are on PATH
 ```
 
 Then build the release binary and installer packages:
-
-```bash
-#!/usr/bin/env bash
-# scripts/build-client-linux.sh
-# Produces a .deb, .rpm, and an AppImage under client/src-tauri/target/release/bundle/
-
-set -euo pipefail
-
-info() { echo "[INFO]  $*"; }
-
-REPO_ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
-FRONTEND_DIR="$REPO_ROOT/client/frontend"
-TAURI_DIR="$REPO_ROOT/client/src-tauri"
-
-#──────────────────────────────────────────────────────────────
-# 1. Install frontend JS dependencies
-#──────────────────────────────────────────────────────────────
-info "Installing Node.js dependencies..."
-cd "$FRONTEND_DIR"
-npm ci --prefer-offline
-
-#──────────────────────────────────────────────────────────────
-# 2. Type-check + build the Vite frontend bundle
-#──────────────────────────────────────────────────────────────
-info "Building frontend (TypeScript type-check + Vite bundle)..."
-npm run build
-# Output: client/frontend/dist/
-
-#──────────────────────────────────────────────────────────────
-# 3. Build the Tauri application (Rust + bundle)
-#    --release applies the [profile.release] settings in Cargo.toml:
-#      strip = true, opt-level = "z", lto = true, panic = "abort"
-#──────────────────────────────────────────────────────────────
-info "Building Tauri application in release mode..."
-cd "$TAURI_DIR"
-cargo tauri build
-
-BUNDLE_DIR="$TAURI_DIR/target/release/bundle"
-info "Build complete. Bundles:"
-find "$BUNDLE_DIR" -type f \( -name "*.deb" -o -name "*.rpm" -o -name "*.AppImage" \) \
-    | while read -r f; do echo "  $f"; done
-```
 
 ```bash
 bash scripts/build-client-linux.sh
@@ -629,65 +271,38 @@ Distribute the resulting `.deb`, `.rpm`, or `.AppImage` from
 
 ## 10. Building the Desktop Client (Windows / macOS)
 
-These steps run on the respective platform natively (cross-compilation for
-Tauri GUI bundles is not supported).
+These steps run on the respective platform natively (cross-compilation for Tauri GUI bundles is not supported).
 
-### Windows (PowerShell, run as user — no admin required for Rustup/Node)
+### Windows (PowerShell, run as user - no admin required for Rustup/Node)
 
 ```powershell
-# 1. Install Rust
 winget install --id Rustlang.Rustup -e
-# Restart terminal, then:
 rustup update stable
-
-# 2. Install Node.js v20+
 winget install --id OpenJS.NodeJS.LTS -e
-# Restart terminal
-
-# 3. Install Visual Studio C++ build tools (required by Rust on Windows)
 winget install --id Microsoft.VisualStudio.2022.BuildTools -e `
     --override "--passive --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
-
-# 4. Tauri CLI
 cargo install tauri-cli --version "^2.0" --locked
-
-# 5. Build
 cd client\frontend
 npm ci
 npm run build
 cd ..\src-tauri
 cargo tauri build
-# Installer: client\src-tauri\target\release\bundle\msi\AnonChat_*.msi
-#            client\src-tauri\target\release\bundle\nsis\AnonChat_*-setup.exe
 ```
 
 ### macOS (zsh / bash)
 
 ```bash
-# 1. Install Xcode Command Line Tools
 xcode-select --install
-
-# 2. Install Homebrew (if not present)
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-
-# 3. Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source "$HOME/.cargo/env"
 rustup update stable
-
-# 4. Node.js v20+
 brew install node@20
 echo 'export PATH="/opt/homebrew/opt/node@20/bin:$PATH"' >> ~/.zshrc
 source ~/.zshrc
-
-# 5. Tauri CLI
 cargo install tauri-cli --version "^2.0" --locked
-
-# 6. Build
 cd client/frontend && npm ci && npm run build
 cd ../src-tauri && cargo tauri build
-# Output: client/src-tauri/target/release/bundle/dmg/AnonChat_*.dmg
-#         client/src-tauri/target/release/bundle/macos/AnonChat.app
 ```
 
 ---
@@ -696,16 +311,16 @@ cd ../src-tauri && cargo tauri build
 
 | # | Item | How |
 |---|------|-----|
-| 1 | Replace self-signed certs with CA-signed certs | `certbot certonly --standalone -d <your-domain>` then mount `/etc/letsencrypt/live/<domain>/` |
-| 2 | Set `INSECURE_SKIP_VERIFY=false` (default) | Never override this in production |
-| 3 | Redis `protected-mode yes` + no public port | Remove `ports: - "6379:6379"` from `docker-compose.yml` in production |
-| 4 | Rotate TLS certs before expiry | Add a cron job: `certbot renew && docker compose restart` |
-| 5 | Run containers as non-root | Already done — Dockerfiles use UID 10001/10002 |
-| 6 | No bind-mount of sensitive host paths | Only `./certs/` is mounted; never mount `/etc` or `/home` |
-| 7 | Limit container memory | Add `mem_limit: 256m` per service in `docker-compose.override.yml` |
+| 1 | Replace self-signed certs with CA-signed certs | Issue certificates for proxy node names and replace the files under `certs/` |
+| 2 | Disable insecure upstream verification | Set `TLS_INSECURE_SKIP_VERIFY=false` for guard and middle; do not use self-signed upstream certificates in production |
+| 3 | Keep Redis private and memory-only | Do not publish port 6379; retain `--save "" --appendonly no` |
+| 4 | Rotate TLS certs before expiry | Renew certificates and restart proxy services |
+| 5 | Run containers as non-root | Proxy and router Dockerfiles use dedicated unprivileged UIDs |
+| 6 | No bind-mount of sensitive host paths | Mount only the required certificate directories |
+| 7 | Limit container memory | Add `mem_limit: 256m` per service in a custom Compose override |
 | 8 | Enable Docker Content Trust | `export DOCKER_CONTENT_TRUST=1` before any `docker pull/build` |
-| 9 | Disable swap on the server | `swapoff -a && sed -i '/swap/d' /etc/fstab` — prevents key material from being swapped to disk |
-| 10 | Audit logs with `auditd` | `apt install auditd && auditctl -w /opt/anonchat/certs -p rwa -k cert-access` |
+| 9 | Disable swap on the server | Disable swap and configure persistent swap policy according to the host OS |
+| 10 | Audit certificate access | Install and configure `auditd` for the deployment certificate directory |
 
 ---
 

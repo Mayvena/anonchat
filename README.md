@@ -13,6 +13,31 @@ In PROMPTS.md there's a collection of the prompts, used to generate the applicat
 
 ## Start Local Stack
 
+Start the backend and frontend development server together from the project root:
+
+```bash
+./start.sh
+```
+
+The script builds and starts the Docker Compose backend, then starts Vite on
+all network interfaces at port `1420`. Open `http://127.0.0.1:1420/` on the
+host, or `http://<host-lan-ip>:1420/` from another device on the same LAN.
+Vite prints the available network URLs when it starts. Press Ctrl+C to stop the
+frontend; stop backend containers separately with `docker compose down`.
+
+If the host firewall blocks inbound connections, allow port `1420` only from
+your LAN subnet. For a host on `192.168.0.0/24` using UFW:
+
+```bash
+sudo ufw allow from 192.168.0.0/24 to any port 1420 proto tcp
+```
+
+Do not expose the Vite development server to the public internet. If LAN access
+still times out after allowing the port, check that the client is not on a guest
+Wi-Fi network with device isolation enabled.
+
+To start only the backend:
+
 ```bash
 docker compose up -d --build
 ```

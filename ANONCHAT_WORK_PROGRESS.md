@@ -607,3 +607,236 @@
 ### Final Outcome
 - Status: partial
 - Summary: Development Compose stack is built, running, and smoke-verified. Go proxy/router and frontend validations pass; security-core Rust source errors remain. Production hardening is not performed.
+
+## Session: 2026-10-27 09:29 EET - Debian 13 installer support
+
+### Task Summary
+- Extend the server prerequisite installer to support Debian 13 while retaining the existing Ubuntu support.
+
+### Scope
+- Files:
+  - install-server-prereqs.sh
+  - DEPLOYMENT.md
+  - ANONCHAT_WORK_PROGRESS.md
+- Subsystems:
+  - infra
+
+### Plan
+1. Select the matching Docker APT repository for supported distributions.
+2. Keep the deployment guide's embedded installer in sync.
+3. Validate shell syntax and installer-copy consistency.
+
+### Progress Log
+- 09:30 Added Debian 13 (Trixie) detection and Docker's Debian repository selection; retained Ubuntu repository selection.
+- 09:30 Removed the Ubuntu-specific fallback deploy username so group assignment uses the invoking sudo user when available.
+- 09:31 Updated the deployment guide's supported OS list, embedded installer, and invocation path.
+
+### Validation Performed
+- `bash -n install-server-prereqs.sh` -> pass - standalone installer parses successfully.
+- `awk '!inside && /^```bash$/ { inside=1; next } inside && /^```$/ { exit } inside { print }' DEPLOYMENT.md | bash -n` -> pass - embedded guide installer parses successfully.
+- `diff -u -w install-server-prereqs.sh <(sed -n '32,171p' DEPLOYMENT.md)` -> pass - installer logic matches the embedded guide copy, ignoring Markdown indentation.
+- `git -c core.whitespace=cr-at-eol diff --check -- DEPLOYMENT.md ANONCHAT_WORK_PROGRESS.md` -> pass - recognizes the tracked CRLF line-ending convention.
+- Privileged installer execution -> not run - the script upgrades system packages and changes Docker/sysctl configuration; syntax and documentation checks were used instead.
+
+### Risks / Blockers
+- The installer has not been run on a clean Debian 13 host in this session.
+
+### Next Actions
+1. Run the installer on a disposable Debian 13 VM before production deployment.
+
+### Final Outcome
+- Status: complete
+- Summary: Installer and deployment documentation now support Debian 13 and preserve Ubuntu 22.04/24.04 support.
+
+## Session: 2026-10-27 09:43 EET - Repair missing Caddy APT keyring
+
+### Task Summary
+- Prevent a configured Caddy Cloudsmith source with a missing signing key from blocking the prerequisite installer at its first APT update.
+
+### Scope
+- Files:
+  - install-server-prereqs.sh
+  - DEPLOYMENT.md
+  - ANONCHAT_WORK_PROGRESS.md
+- Subsystems:
+  - infra
+
+### Progress Log
+- 09:43 Added a conditional repair that fetches the official Caddy signing key only when the matching source is configured and its expected keyring is absent.
+- 09:43 Synchronized the guide's embedded installer with the standalone script.
+
+### Validation Performed
+- `bash -n install-server-prereqs.sh` -> pass.
+- Embedded guide installer `bash -n` -> pass.
+- `diff -u -w` between standalone and embedded installer -> pass.
+- Live installer execution -> not run - privileged package upgrades and system configuration changes are outside safe validation here.
+
+### Risks / Blockers
+- The Caddy repair path was not exercised against a live configured Caddy APT source in this workspace.
+
+### Final Outcome
+- Status: complete
+- Summary: A missing Caddy keyring is repaired from Caddy's Cloudsmith signing-key endpoint before APT metadata refresh; unrelated APT sources are not modified.
+
+## Session: 2026-10-27 10:12 EET - TLS Compose override automation
+
+### Task Summary
+- Automate creation of the local Docker Compose TLS override during certificate generation.
+
+### Scope
+- Files:
+  - scripts/generate-tls-certs.sh
+  - DEPLOYMENT.md
+  - ANONCHAT_WORK_PROGRESS.md
+- Subsystems:
+  - infra
+
+### Plan
+1. Generate a safe, repeatable Compose override for TLS-enabled proxy services.
+2. Replace manual override instructions with the script workflow and correct router TLS guidance.
+3. Validate shell behavior and merged Compose configuration in an isolated copy.
+
+### Progress Log
+- 10:12 Updated the generator to create a project-root Compose override, mount proxy certificates read-only, set proxy TLS paths, and preserve non-generated overrides.
+- 10:12 Updated the deployment guide to use the generator and clarify that the current router does not load TLS certificates.
+
+### Validation Performed
+- `bash -n scripts/generate-tls-certs.sh` -> pass - generator shell syntax is valid.
+- Isolated generation plus `docker compose config --format yaml` -> pass - all three proxy TLS paths and read-only mounts merge correctly; no unused router certificate is generated.
+- Isolated second generation -> pass - the generated override is accepted on rerun.
+- Isolated custom override check -> pass - non-generated content is left intact and generation stops with an error.
+
+### Risks / Blockers
+- The generated override is intended for the repository's local single-host Compose stack; a custom override must be merged manually.
+
+### Next Actions
+1. Replace self-signed certificates with trusted CA-issued files before public production exposure.
+
+### Final Outcome
+- Status: complete
+- Summary: Certificate generation now creates the proxy TLS Compose override automatically, while preserving user-created overrides and matching the deployment guide to actual router behavior.
+
+## Session: 2026-10-27 10:30 EET - Extract deployment scripts
+
+### Task Summary
+- Move standalone deployment and Linux client Bash scripts from DEPLOYMENT.md into scripts/ and review adjacent deployment instructions.
+
+### Scope
+- Files:
+  - scripts/configure-firewall.sh
+  - scripts/install-client-prereqs-linux.sh
+  - scripts/build-client-linux.sh
+  - scripts/generate-tls-certs.sh
+  - DEPLOYMENT.md
+  - ANONCHAT_WORK_PROGRESS.md
+- Subsystems:
+  - infra
+  - client build
+
+### Plan
+1. Extract embedded Bash scripts into standalone files and update guide invocations.
+2. Review deployment safety details and correct material mismatches.
+3. Validate shell syntax, Compose certificate access, guide structure, and whitespace.
+
+### Progress Log
+- 10:30 Extracted the firewall, Linux client prerequisite, and Linux client build scripts; existing server prerequisite and certificate generation scripts remain standalone.
+- 10:30 Replaced duplicate script bodies in DEPLOYMENT.md and restored the Windows/macOS instructions and production hardening table.
+- 10:30 Made SSH port configurable in the UFW script and documented that it resets existing rules.
+- 10:30 Adjusted generated TLS key permissions to 0640 and Compose supplementary groups so unprivileged proxy containers can read keys without world access.
+- 10:30 Corrected the Systemd reload shell invocation and documented the actual TLS verification setting.
+
+### Validation Performed
+- `bash -n scripts/*.sh` -> pass - all five scripts parse.
+- Isolated `docker compose config --format yaml` and key permission checks -> pass - all three certificate mounts are read-only and the key is group-accessible only to the owner's primary group.
+- Guide structure checks -> pass - all 12 numbered sections remain and no standalone Bash script bodies are embedded.
+- `git -c core.whitespace=cr-at-eol diff --check -- DEPLOYMENT.md scripts` -> pass.
+
+### Risks / Blockers
+- The firewall script still intentionally resets UFW rules; deployers must confirm SSH access/port and review exposed ports before execution.
+- Linux prerequisite installation and client builds were not run because they alter the host or require full build dependencies.
+
+### Next Actions
+1. Review the firewall port policy for the target single-host or multi-server deployment before running it.
+
+### Final Outcome
+- Status: complete
+- Summary: Deployment script bodies are extracted into scripts/ and the guide now points to them; script syntax and generated TLS Compose access were validated.
+
+## Session: 2026-10-27 10:56 EET - Master deployment script
+
+### Task Summary
+- Add a project-root orchestrator for sequential server deployment setup.
+
+### Scope
+- Files:
+  - deploy.sh
+  - DEPLOYMENT.md
+  - ANONCHAT_WORK_PROGRESS.md
+- Subsystems:
+  - infra
+
+### Plan
+1. Order the prerequisite, certificate, and firewall scripts with correct privilege boundaries.
+2. Require confirmation before host changes and allow SSH port configuration.
+3. Validate cancellation and accepted paths in an isolated project copy.
+
+### Progress Log
+- 10:56 Added executable `deploy.sh` at the project root.
+- 10:56 The master script requires an explicit confirmation, runs prerequisites and firewall setup via sudo, generates keys unprivileged, validates `SSH_PORT`, and prints next Compose actions.
+- 10:56 Documented the master command in DEPLOYMENT.md.
+
+### Validation Performed
+- `bash -n deploy.sh` -> pass.
+- `printf 'no\\n' | ./deploy.sh` -> pass - cancellation exits before running component scripts.
+- Isolated accepted run with stubbed sudo -> pass - prerequisite, certificate, and firewall steps execute sequentially; `SSH_PORT` is forwarded and TLS key mode remains 0640.
+- Host package installation and firewall configuration -> not run - those actions modify system state; the isolated stub test validated orchestration without host changes.
+
+### Risks / Blockers
+- The firewall component intentionally resets UFW rules; deployers must confirm SSH port and console access before confirming the master script.
+- The master script does not build or start Docker services; it prints those follow-up Compose commands.
+
+### Next Actions
+1. Review the firewall exposure policy for the target deployment before running `./deploy.sh` on a host.
+
+### Final Outcome
+- Status: complete
+- Summary: Added a confirmed, ordered server setup orchestrator with unprivileged TLS key generation and configurable SSH firewall access.
+
+## Session: 2026-10-27 11:10 EET - Combined local startup script
+
+### Task Summary
+- Add one root command to start the local Compose backend and frontend dev server.
+
+### Scope
+- Files:
+  - start.sh
+  - README.md
+  - ANONCHAT_WORK_PROGRESS.md
+- Subsystems:
+  - infra
+  - frontend
+
+### Plan
+1. Verify backend and frontend startup commands and prerequisites.
+2. Add a root-level startup script with ordered startup and clear shutdown guidance.
+3. Validate shell, Compose configuration, and command order without leaving services running.
+
+### Progress Log
+- 11:10 Added executable `start.sh`; it checks Docker Compose/npm, installs frontend dependencies when absent, starts the backend stack, then runs Vite on port 1420.
+- 11:10 Documented the combined command and backend stop command in README.md.
+
+### Validation Performed
+- `bash -n start.sh` -> pass.
+- `docker compose config -q` -> pass.
+- Isolated docker/npm stub test -> pass - backend Compose startup precedes frontend Vite, using the expected frontend working directory.
+- Live stack startup -> not run - this would leave Docker services running in the user's environment.
+
+### Risks / Blockers
+- The script intentionally leaves backend containers running after Ctrl+C; README documents `docker compose down` as the separate cleanup command.
+
+### Next Actions
+1. Run `./start.sh` locally to use the combined development workflow.
+
+### Final Outcome
+- Status: complete
+- Summary: Added and documented a root startup script for the local backend and frontend dev server.
